@@ -1,0 +1,50 @@
+{
+  "name": "2youg1-md2prompt",
+  "version": "1.5.1",
+  "description": "本地单文件 HTML 的 Markdown/JSONL 修改器：编辑即留痕，一键导出协议精确的 Prompt.md 回传 AI",
+  "license": "MPL-2.0",
+  "author": "2youg1 (https://github.com/kaile9)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kaile9/md2prompt.git"
+  },
+  "keywords": ["markdown", "editor", "prompt", "llm", "ai-workflow", "track-changes", "single-file", "local-first"],
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && bun -e \"require('fs').copyFileSync('dist/index.html','dist/2youg1-md2prompt.html')\"",
+    "test": "bun test",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-markdown": "^6.5.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/search": "^6.7.1",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
+    "@milkdown/core": "^7.21.3",
+    "@milkdown/ctx": "^7.21.3",
+    "@milkdown/plugin-history": "^7.21.3",
+    "@milkdown/plugin-listener": "^7.21.3",
+    "@milkdown/preset-commonmark": "^7.21.3",
+    "@milkdown/preset-gfm": "^7.21.3",
+    "@milkdown/utils": "^7.21.3",
+    "@noble/hashes": "^2.2.0",
+    "katex": "^0.17.0",
+    "mermaid": "^11.16.0",
+    "prosemirror-model": "^1.25.11",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.42.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "unified": "^11.0.5"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}

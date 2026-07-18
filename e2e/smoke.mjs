@@ -1,0 +1,9 @@
+import { chromium } from 'playwright';
+const HTML = new URL('../dist/2youg1-md2prompt.html', import.meta.url).href;
+const b = await chromium.launch();
+const p = await b.newPage();
+await p.goto(HTML);
+await p.waitForTimeout(1200);
+const ok = await p.evaluate(() => !!window.__md2p?.store);
+console.log('hook:', ok, '| title:', await p.title());
+await b.close();

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="marble" data-style="geek">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="data:," />
+  <title>2youg1的MD2Prompt</title>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <button id="open-btn" type="button"></button>
+      <button id="new-btn" type="button"></button>
+      <span id="file-name"></span>
+      <span id="save-state"></span>
+      <span id="cursor-pos"></span>
+      <button id="mode-btn" type="button"></button>
+      <button id="settings-btn" type="button"></button>
+    </header>
+    <aside id="outline"></aside>
+    <main id="page">
+      <div id="scroller">
+        <div id="gutter"></div>
+        <article id="doc"></article>
+      </div>
+    </main>
+    <aside id="changes"></aside>
+    <div id="floater"></div>
+    <div id="popover"></div>
+    <div id="print-head"></div>
+    <div id="print-foot"></div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
