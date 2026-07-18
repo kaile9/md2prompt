@@ -1,13 +1,10 @@
 // test/state.test.ts — store 接线与生命周期（v1.2 隐藏/撤回/墓碑）。
-// promptmd/hash 是桩（会 throw 的真实实现不接），mock 掉；fsio 用真实现（无句柄时安全空转）。
-import { test, expect, describe, mock, beforeAll, beforeEach } from 'bun:test';
+// 使用真实 prompt/hash/fsio；fsio 无句柄时安全空转，避免进程级模块 mock 污染其他测试文件。
+import { test, expect, describe, beforeAll, beforeEach } from 'bun:test';
 import type { Block } from '../src/core/ir';
 
 const blk = (id: string, text: string): Block => ({ id, kind: 'para', text, lineStart: 0, lineEnd: 0 });
 const FILE = { name: 'a.md', kind: 'md' as const };
-
-mock.module('../src/core/promptmd', () => ({ renderPrompt: () => 'PROMPT', parsePrompt: () => ({ meta: {}, ops: [] }) }));
-mock.module('../src/core/hash', () => ({ hashText: async () => 'blake3:x' }));
 
 let store: any, getSaveState: any;
 beforeAll(async () => ({ store, getSaveState } = await import('../src/core/state')));
@@ -195,6 +192,44 @@ test('M5：hidden 的 delete 跨会话播种（blockId \'\' 按 before 补绑）
   const del = store.state.ops.find((o: any) => o.type === 'delete');
   expect(del.state).toBe('hidden');
   expect(del.blockId).toBe('b2');
+});
+
+test('load 可延迟 Prompt 持久化，配对决策完成后再显式启动 state→fsio 写入链', async () => {
+  const promptWrites: string[] = [];
+  const docHandle = {
+    name: 'deferred.md',
+    async queryPermission() { return 'granted'; },
+    async requestPermission() { return 'granted'; },
+    async getFile() { return { text: async () => '初始', lastModified: 1 }; },
+    async createWritable() { return { async write() {}, async close() {} }; },
+  };
+  const promptHandle = {
+    async createWritable() {
+      return { async write(text: string) { promptWrites.push(text); }, async close() {} };
+    },
+  };
+  const dir = { async getFileHandle() { return promptHandle; } };
+  const original = (globalThis as any).window;
+  (globalThis as any).window = {
+    showOpenFilePicker: async () => [docHandle],
+    showDirectoryPicker: async () => dir,
+  };
+
+  try {
+    const fs = await import('../src/core/fsio');
+    await fs.openDoc();
+    store.dispatch({ type: 'load', file: FILE, cur: [blk('b1', '初始')], deferPrompt: true });
+    await Bun.sleep(1700);
+    expect(promptWrites).toEqual([]);
+    store.dispatch({ type: 'persistPrompt' });
+    await Bun.sleep(1700);
+    expect(promptWrites).toHaveLength(1);
+    expect(promptWrites[0]).toContain('protocol: md2prompt/1.2.0');
+    fs.resetDoc();
+  } finally {
+    if (original === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = original;
+  }
 });
 
 test('subscribe 通知与 setSaveState', () => {

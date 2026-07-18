@@ -14,8 +14,9 @@ import * as fs from './fsio';
 export type { DocState } from './ir';
 export type Listener = (state: DocState | null) => void;
 export type Action =
-  | { type: 'load'; file: DocState['file']; cur: Block[]; base?: Block[]; ops?: Op[] }
+  | { type: 'load'; file: DocState['file']; cur: Block[]; base?: Block[]; ops?: Op[]; deferPrompt?: boolean }
   | { type: 'new' }
+  | { type: 'persistPrompt' } // load 配对决策完成后显式启动 Prompt 写入
   | { type: 'patchCur'; cur: Block[] }
   | { type: 'addNote'; blockId: string; note: string; quote?: string }
   | { type: 'editNote'; id: string; note: string; quote?: string } // 改批注文字（可一并改选段，v1.3 批注打磨）
@@ -46,7 +47,9 @@ let opSeq = 0;
 let save: fs.SaveState = 'saved';
 let lastAction: string | null = null;
 let indentWriteFlag = false; // 「首行缩进·写入文档」（ui/settings 同步进来）
-let promptTimer: ReturnType<typeof setTimeout> | undefined;
+const promptTimers = new WeakMap<DocState, ReturnType<typeof setTimeout>>();
+const promptSeq = new WeakMap<DocState, number>();
+const promptTargets = new WeakMap<DocState, fs.PromptTarget>();
 const listeners = new Set<Listener>();
 const nid = () => 'o' + ++opSeq;
 const notify = () => listeners.forEach((f) => f(doc));
@@ -69,7 +72,22 @@ export const exportText = (blocks: Block[], kind: DocKind): string => {
   return indentWriteFlag && kind === 'md' ? indentWrite(t) : t;
 };
 
-function commit(): void {
+function schedulePrompt(d: DocState): void {
+  const target = fs.capturePromptTarget();
+  const prior = promptTimers.get(d);
+  if (prior) clearTimeout(prior);
+  const seq = (promptSeq.get(d) ?? 0) + 1;
+  promptSeq.set(d, seq);
+  if (!target) return;
+  promptTargets.set(d, target);
+  const timer = setTimeout(() => {
+    if (promptTimers.get(d) === timer) promptTimers.delete(d);
+    void writePromptDebounced(d, target, seq);
+  }, 800);
+  promptTimers.set(d, timer);
+}
+
+function commit(persistPrompt = true): void {
   const d = doc;
   if (!d) return;
   blockLineMap(d.cur);
@@ -96,8 +114,7 @@ function commit(): void {
   }
   d.withdrawn = withdrawn;
   void fs.saveDoc(exportText(d.cur, d.file.kind)); // fsio 内部防抖落盘
-  clearTimeout(promptTimer);
-  promptTimer = setTimeout(writePromptDebounced, 800);
+  if (persistPrompt) schedulePrompt(d);
   notify();
 }
 
@@ -124,12 +141,11 @@ export async function buildPrompt(d: DocState, copy = false): Promise<string> {
   );
 }
 
-async function writePromptDebounced(): Promise<void> {
-  const d = doc;
-  if (!d) return;
+async function writePromptDebounced(d: DocState, target: fs.PromptTarget, seq: number): Promise<void> {
   try {
     // 哈希/渲染失败只丢本次 Prompt 落盘，doc 保存不受影响；下轮 commit 重试
-    void fs.writePrompt(await buildPrompt(d));
+    const text = await buildPrompt(d);
+    if (promptSeq.get(d) === seq) void fs.writePrompt(text, target);
   } catch {
     /* 静默 */
   }
@@ -213,6 +229,10 @@ export const store: Store = {
       save = a.save;
       return notify();
     }
+    if (a.type === 'persistPrompt') {
+      if (doc) schedulePrompt(doc);
+      return;
+    }
     if (a.type === 'new' || a.type === 'load') {
       const ops = a.type === 'load' ? (a.ops ?? []) : [];
       manual = ops.filter((o) => o.state !== 'withdrawn' && (o.type === 'note' || o.type === 'move'));
@@ -247,8 +267,7 @@ export const store: Store = {
           ? { file: a.file, cur: a.cur, base: a.base ?? a.cur, ops: [] }
           : { file: { name: '未命名.md', kind: 'md' }, base: [], cur: [], ops: [] };
       blockLineMap(doc.base);
-      clearTimeout(promptTimer);
-      return commit();
+      return commit(a.type === 'new' || !a.deferPrompt);
     }
     if (!doc) return;
     switch (a.type) {
@@ -349,9 +368,14 @@ export const store: Store = {
       case 'clearWithdrawn':
         withdrawn = [];
         break;
-      case 'suppressPrompt':
-        clearTimeout(promptTimer);
+      case 'suppressPrompt': {
+        clearTimeout(promptTimers.get(doc));
+        promptTimers.delete(doc);
+        promptSeq.set(doc, (promptSeq.get(doc) ?? 0) + 1);
+        const target = promptTargets.get(doc);
+        if (target) fs.cancelPrompt(target); // 已越过 state 防抖、仍在 fs 全局队列中的写也要失效
         return; // 不 commit 不 notify：仅取消本次 load 排程的 Prompt 覆写
+      }
     }
     commit();
   },

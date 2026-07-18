@@ -96,6 +96,13 @@ export function mountSource(el: HTMLElement, text: string, hooks: SourceHooks): 
   });
 }
 
+/** 非破坏性读取当前源码文本并清除已被该快照覆盖的尾回调；取消选择时保留撤销历史。 */
+export function peekSource(): string | undefined {
+  clearTimeout(timer);
+  timer = undefined;
+  return view?.state.doc.toString();
+}
+
 /** 销毁并返回最终文本（防抖尾巴不丢字，语义同 destroyEditor）；未挂载时 undefined。 */
 export function destroySource(): string | undefined {
   clearTimeout(timer);

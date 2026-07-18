@@ -22,7 +22,7 @@ MD2Prompt 的答案是：**协议比编辑器重要**。编辑器只是薄层，
 
 ## 30 秒上手
 
-1. 去 [Releases](../../releases) 下载 `2youg1-md2prompt.html`（就一个文件，6 MB，含全部依赖，无网络无 API 无遥测）；
+1. 去 [Releases](../../releases) 下载 `2youg1-md2prompt.html`（就一个文件，6 MB，依赖全部内嵌，无后端、API 或遥测；编辑本地文件无需联网，远程图片与外链仍按浏览器规则请求网络）；
 2. 双击，用 Chrome / Edge 打开，点「打开」选你的 `.md` / `.jsonl` / `.xml`；
 3. 直接改。右侧「修订」栏立刻出卡片；
 4. 点「复制 Prompt」，粘给 AI。AI 拿到：文档名、BLAKE3 哈希、每条修改（原文+新文+行号+时间）、每条批注；
@@ -84,10 +84,10 @@ bun install
 bun run dev      # 开发服务器
 bun run build    # 产出单个 dist/2youg1-md2prompt.html
 bun run check    # tsc --noEmit
-bun test         # 142 例单元测试（纯函数核心全覆盖）
+bun test         # 153 例单元测试（11 个文件）
 ```
 
-E2E（Playwright，需 Node）：`cd e2e && node life.mjs`（另有 v13/note/srcmode/export/look 等十数套）。
+E2E（Playwright，需 Node）：`life.mjs`、`v13.mjs`、`note.mjs`、`srcmode.mjs`、`export.mjs`、`look.mjs` 这 6 个脚本会以非零退出码报告失败；`qa15-*`、`perf*`、截图脚本是人工探针，不作为自动门禁。
 
 ## FAQ
 
@@ -95,7 +95,7 @@ E2E（Playwright，需 Node）：`cd e2e && node life.mjs`（另有 v13/note/src
 
 **AI 不会用工具也能配合吗？** 能。这正是设计目标：Prompt.md 里的一切都是自解释文本，AI 读完就知道该改哪、怎么改；它返回新全文即可，不需要任何函数调用。
 
-**数据去哪了？** 哪也没去。无网络请求、无 API、无遥测；文件读写全部走浏览器 File System Access API，句柄存在你自己的 IndexedDB。
+**数据去哪了？** 应用不向服务端上传文档，没有服务端 API 或遥测；文件读写走浏览器 File System Access API，句柄存在你自己的 IndexedDB。文档中的远程图片会由浏览器按其 URL 加载，点击外链也会访问对应网站。
 
 ## 许可证
 
