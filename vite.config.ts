@@ -6,10 +6,5 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsInlineLimit: 100000000,
-    rollupOptions: {
-      output: {
-        inlineDynamicImports: true,
-      },
-    },
   },
 });
