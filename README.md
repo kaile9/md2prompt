@@ -2,6 +2,8 @@
 
 [English](README.en.md) · [下载最新版](../../releases) · [设计基准 SPEC](SPEC.md) · [反馈](https://github.com/kaile9)
 
+> 本项目从设计到实现完全由 [Kimi K3](https://www.moonshot.cn) 搭建，未使用任何其它模型。
+
 **一个 HTML 文件，就是你和 AI 之间的修订工作台。**
 
 双击打开，像 Word 一样改 Markdown；你的每一处改动自动留痕；改完点一下「复制 Prompt」，AI 不用看原文、不用调工具，就能逐条读懂你改了什么、还想让它做什么。
