@@ -1,6 +1,6 @@
 {
   "name": "2youg1-md2prompt",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "本地单文件 HTML 的 Markdown/JSONL 修改器：编辑即留痕，一键导出协议精确的 Prompt.md 回传 AI",
   "license": "MPL-2.0",
   "author": "2youg1 (https://github.com/kaile9)",
@@ -8,7 +8,16 @@
     "type": "git",
     "url": "https://github.com/kaile9/md2prompt.git"
   },
-  "keywords": ["markdown", "editor", "prompt", "llm", "ai-workflow", "track-changes", "single-file", "local-first"],
+  "keywords": [
+    "markdown",
+    "editor",
+    "prompt",
+    "llm",
+    "ai-workflow",
+    "track-changes",
+    "single-file",
+    "local-first"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite",
