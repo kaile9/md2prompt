@@ -2,6 +2,8 @@
 
 [中文](README.md) · [Download](../../releases) · [Design spec (中文)](SPEC.md) · [Feedback](https://github.com/kaile9)
 
+> Built entirely with [Kimi K3](https://www.moonshot.cn) — no other models were used at any point.
+
 **One HTML file — the revision workbench between you and your AI.**
 
 Double-click, edit Markdown like Word, and every change is tracked automatically. Hit "Copy Prompt" and the AI — without seeing the original file, without any tool calls — reads exactly what you changed and what you still want done.
