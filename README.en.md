@@ -84,7 +84,7 @@ bun install
 bun run dev      # dev server
 bun run build    # produces a single dist/2youg1-md2prompt.html
 bun run check    # tsc --noEmit
-bun test         # 153 unit tests across 11 files
+bun test         # 154 unit tests across 11 files
 ```
 
 E2E (Playwright, requires Node): `life.mjs`, `v13.mjs`, `note.mjs`, `srcmode.mjs`, `export.mjs`, and `look.mjs` report failures with a non-zero exit code. The `qa15-*`, `perf*`, and screenshot scripts are manual probes, not automated gates.

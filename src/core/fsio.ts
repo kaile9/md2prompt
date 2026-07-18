@@ -154,22 +154,29 @@ export function resetDoc(name = '未命名.md'): void { // 新建：清空句柄
 
 /** 所有文件写入共用一条提交链；即使两个句柄别名到同一物理文件，也不会并发 close。 */
 let commits = Promise.resolve();
+let writeOrder = 0;
+interface PendingWrite { order: number; start(): void }
+const pendingWrites = new Set<PendingWrite>();
 function enqueueWrite(run: () => Promise<void>): Promise<void> {
   const queued = commits.then(run, run);
   commits = queued.catch(() => {});
   return queued;
 }
+async function flushWrites(): Promise<void> {
+  [...pendingWrites].sort((a, b) => a.order - b.order).forEach(ticket => ticket.start());
+  await commits;
+}
 
 interface DebouncedChannel<K, V> {
   write(key: K, value: V): Promise<void>;
   cancel(key: K): void;
-  flush(): Promise<void>;
 }
 
-/** 防抖通道：同一目标的调用合并，目标之间隔离；取消令牌会让已排队但未执行的提交失效。 */
+/** 防抖通道：同一目标的调用合并，目标之间隔离；全局顺序在请求发生时登记。 */
 function channel<K, V>(commit: (key: K, value: V) => Promise<void>): DebouncedChannel<K, V> {
   interface Slot {
     timer?: ReturnType<typeof setTimeout>;
+    ticket?: PendingWrite;
     latest: V;
     waiters: (() => void)[];
     generation: number;
@@ -178,12 +185,14 @@ function channel<K, V>(commit: (key: K, value: V) => Promise<void>): DebouncedCh
   const slots = new Map<K, Slot>();
 
   const cleanup = (key: K, slot: Slot): void => {
-    if (!slot.timer && !slot.waiters.length && !slot.runs.size && slots.get(key) === slot) slots.delete(key);
+    if (!slot.timer && !slot.ticket && !slot.waiters.length && !slot.runs.size && slots.get(key) === slot) slots.delete(key);
   };
   const enqueue = (key: K, slot: Slot): Promise<void> | null => {
     if (!slot.waiters.length) return null;
     clearTimeout(slot.timer);
     slot.timer = undefined;
+    if (slot.ticket) pendingWrites.delete(slot.ticket);
+    slot.ticket = undefined;
     const latest = slot.latest;
     const waiters = slot.waiters;
     const generation = slot.generation;
@@ -207,8 +216,24 @@ function channel<K, V>(commit: (key: K, value: V) => Promise<void>): DebouncedCh
       }
       slot.latest = value;
       slot.waiters.push(res);
+      const order = ++writeOrder;
+      if (slot.ticket) slot.ticket.order = order;
+      else {
+        let ticket: PendingWrite;
+        ticket = {
+          order,
+          start: () => {
+            if (slot!.ticket !== ticket) return;
+            pendingWrites.delete(ticket);
+            slot!.ticket = undefined;
+            enqueue(key, slot!);
+          },
+        };
+        slot.ticket = ticket;
+        pendingWrites.add(ticket);
+      }
       clearTimeout(slot.timer);
-      slot.timer = setTimeout(() => enqueue(key, slot!), 800);
+      slot.timer = setTimeout(() => slot!.ticket?.start(), 800);
     }),
     cancel: (key) => {
       const slot = slots.get(key);
@@ -216,19 +241,12 @@ function channel<K, V>(commit: (key: K, value: V) => Promise<void>): DebouncedCh
       slot.generation++;
       clearTimeout(slot.timer);
       slot.timer = undefined;
+      if (slot.ticket) pendingWrites.delete(slot.ticket);
+      slot.ticket = undefined;
       const waiters = slot.waiters;
       slot.waiters = [];
       waiters.forEach(w => w());
       cleanup(key, slot);
-    },
-    flush: async () => {
-      const runs = new Set<Promise<void>>();
-      for (const [key, slot] of slots) {
-        const run = enqueue(key, slot);
-        if (run) runs.add(run);
-        slot.runs.forEach(p => runs.add(p));
-      }
-      await Promise.all([...runs]);
     },
   };
 }
@@ -266,10 +284,6 @@ export function writePrompt(t: string, target = capturePromptTarget()): Promise<
 /** 取消该 Prompt 目标尚未开始的防抖或排队写入；已进入 createWritable 的系统调用无法回收。 */
 export function cancelPrompt(target: PromptTarget): void {
   promptFlush.cancel(target);
-}
-
-async function flushWrites(): Promise<void> {
-  await Promise.all([docFlush.flush(), promptFlush.flush()]);
 }
 
 export async function saveDocAs(t: string): Promise<boolean> { // 显式保存（新文档首次保存 / fallback 下载）

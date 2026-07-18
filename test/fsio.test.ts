@@ -289,6 +289,43 @@ test('同名 Prompt 不存在与读取失败必须分流，读取失败不能伪
   }
 });
 
+test('save-as 触发跨通道 flush 时仍按请求先后提交，取消选择器不暴露倒序结果', async () => {
+  let disk = '';
+  const handle = {
+    name: 'same.md',
+    async queryPermission() { return 'granted'; },
+    async requestPermission() { return 'granted'; },
+    async getFile() { return { text: async () => disk, lastModified: 1 }; },
+    async createWritable() {
+      let buffer = '';
+      return {
+        async write(text: string) { buffer = text; },
+        async close() { disk = buffer; },
+      };
+    },
+  };
+  const dir = { async getFileHandle() { return handle; } };
+  const original = (globalThis as any).window;
+  (globalThis as any).window = {
+    showOpenFilePicker: async () => [handle],
+    showDirectoryPicker: async () => dir,
+    showSaveFilePicker: async () => { throw new Error('cancelled'); },
+  };
+
+  try {
+    const fs = await import('../src/core/fsio.ts?flush-request-order');
+    await fs.openDoc();
+    const older = fs.writePrompt('prompt-old');
+    const newer = fs.saveDoc('doc-new');
+    expect(await fs.saveDocAs('unused')).toBe(false);
+    await Promise.all([older, newer]);
+    expect(disk).toBe('doc-new');
+  } finally {
+    if (original === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = original;
+  }
+});
+
 test('同一目标的写入串行提交，慢旧写不能在快新写之后覆盖文件', async () => {
   let disk = '';
   let created = 0;

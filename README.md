@@ -84,7 +84,7 @@ bun install
 bun run dev      # 开发服务器
 bun run build    # 产出单个 dist/2youg1-md2prompt.html
 bun run check    # tsc --noEmit
-bun test         # 153 例单元测试（11 个文件）
+bun test         # 154 例单元测试（11 个文件）
 ```
 
 E2E（Playwright，需 Node）：`life.mjs`、`v13.mjs`、`note.mjs`、`srcmode.mjs`、`export.mjs`、`look.mjs` 这 6 个脚本会以非零退出码报告失败；`qa15-*`、`perf*`、截图脚本是人工探针，不作为自动门禁。

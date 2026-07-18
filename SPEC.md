@@ -275,7 +275,7 @@ withdrawn: 1
 | `styles.css` | 布局 + 3 主题 × 2 风格（CSS 变量） | — |
 | `main.ts` | 装配：布局骨架、打开/新建、store 接线、模式分发 | — |
 
-当前测试（`bun test`）：11 个文件、153 例。`test/ir.test.ts` `test/changes.test.ts` `test/diffview.test.ts`（句级 diff）`test/promptmd.test.ts`（§3 往返 + 生命周期/C 类 + semver 兼容）`test/state.test.ts`（隐藏/撤回两阶段/复活/清空 + 延迟 Prompt 持久化全链路）`test/hash.test.ts` `test/roundtrip.test.ts`（diff→render→parse→rebind→applyOps 全链路，含墓碑直通）`test/fsio.test.ts`（路径 helper + 跨目标/跨通道串行化、save-as 顺序/失败、目标代次/取消、同名 Prompt 错误分流）`test/htmlguard.test.ts` `test/indent.test.ts` `test/linkref.test.ts`。
+当前测试（`bun test`）：11 个文件、154 例。`test/ir.test.ts` `test/changes.test.ts` `test/diffview.test.ts`（句级 diff）`test/promptmd.test.ts`（§3 往返 + 生命周期/C 类 + semver 兼容）`test/state.test.ts`（隐藏/撤回两阶段/复活/清空 + 延迟 Prompt 持久化全链路）`test/hash.test.ts` `test/roundtrip.test.ts`（diff→render→parse→rebind→applyOps 全链路，含墓碑直通）`test/fsio.test.ts`（路径 helper + 跨目标/跨通道串行化、save-as 顺序/失败、目标代次/取消、同名 Prompt 错误分流）`test/htmlguard.test.ts` `test/indent.test.ts` `test/linkref.test.ts`。
 
 ## 8. 已知边界（v2 候选，现在不写）
 
