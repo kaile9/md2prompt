@@ -1,13 +1,10 @@
 // test/state.test.ts — store 接线与生命周期（v1.2 隐藏/撤回/墓碑）。
-// promptmd/hash 是桩（会 throw 的真实实现不接），mock 掉；fsio 用真实现（无句柄时安全空转）。
-import { test, expect, describe, mock, beforeAll, beforeEach } from 'bun:test';
+// 使用真实 prompt/hash/fsio；fsio 无句柄时安全空转，避免进程级模块 mock 污染其他测试文件。
+import { test, expect, describe, beforeAll, beforeEach } from 'bun:test';
 import type { Block } from '../src/core/ir';
 
 const blk = (id: string, text: string): Block => ({ id, kind: 'para', text, lineStart: 0, lineEnd: 0 });
 const FILE = { name: 'a.md', kind: 'md' as const };
-
-mock.module('../src/core/promptmd', () => ({ renderPrompt: () => 'PROMPT', parsePrompt: () => ({ meta: {}, ops: [] }) }));
-mock.module('../src/core/hash', () => ({ hashText: async () => 'blake3:x' }));
 
 let store: any, getSaveState: any;
 beforeAll(async () => ({ store, getSaveState } = await import('../src/core/state')));

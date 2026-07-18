@@ -71,12 +71,13 @@
 
 - 运行时：浏览器单页应用。构建：Bun + Vite + `vite-plugin-singlefile`，产出**单个 HTML**（`dist/2youg1-md2prompt.html`），双击即用。
 - 源：`bunfig.toml` 配 `[install] registry = "https://registry.npmmirror.com"`（npmjs 直连不通）。
-- 依赖（全部经 npmmirror；无 Web 字体，只用系统字体栈）：
-  - 编辑：`@milkdown/core` `@milkdown/ctx` `@milkdown/preset-commonmark` `@milkdown/preset-gfm` `@milkdown/plugin-history` `@milkdown/plugin-listener` `@milkdown/utils` `prosemirror-model` `prosemirror-state` `prosemirror-view`
+- 运行依赖（全部经 npmmirror；无 Web 字体，只用系统字体栈）：
+  - 编辑：`@milkdown/core` `@milkdown/ctx` `@milkdown/preset-commonmark` `@milkdown/preset-gfm` `@milkdown/plugin-history` `@milkdown/plugin-listener` `@milkdown/utils` `prosemirror-commands` `prosemirror-model` `prosemirror-schema-list` `prosemirror-state` `prosemirror-view`
+  - 源码模式：`@codemirror/commands` `@codemirror/lang-markdown` `@codemirror/language` `@codemirror/search` `@codemirror/state` `@codemirror/view` `@lezer/highlight`
   - Markdown AST/静态渲染：`unified` `remark-parse` `remark-gfm` `remark-math`（v1.1 起静态渲染走自建 mddom，不再需要 rehype 系）
   - 哈希：`@noble/hashes`（BLAKE3 为主，SHA-3 备用）
   - 图与公式：`mermaid`、`katex`（均打包进单文件；初始化惰性——首次用到才 `initialize`，避免白屏成本）
-- `build.rollupOptions.output.inlineDynamicImports = true`，`assetsInlineLimit` 拉满（KaTeX 字体 base64 内联）。
+- `vite-plugin-singlefile` 关闭代码分片并内联动态依赖；`assetsInlineLimit` 拉满（KaTeX 字体 base64 内联）。
 - TS strict。目标：应用代码总量 < 4000 行；单文件 TS 模块 < 400 行，CSS < 420 行（紧凑格式）；注释只写非显然不变量；UI 文案全部中文、集中在 `ui/strings.ts`。超线备案：main.ts（870，装配集中）、styles.css（约 550，三主题变量密集）——v1.5.1 评审确认暂不拆，新增功能优先向对应小模块归位。
 - 工程质量红线（用户原话转述）：鲁棒、简洁、概念清晰、易扩展，K3 级模型可轻松 debug/加功能。**禁止**投机性抽象、死代码、重复实现。
 
@@ -274,7 +275,7 @@ withdrawn: 1
 | `styles.css` | 布局 + 3 主题 × 2 风格（CSS 变量） | — |
 | `main.ts` | 装配：布局骨架、打开/新建、store 接线、模式分发 | — |
 
-测试（`bun test`，纯函数模块全覆盖核心路径）：`test/ir.test.ts` `test/changes.test.ts` `test/diffview.test.ts`（句级 diff）`test/promptmd.test.ts`（§3 往返 + 生命周期/C 类 + semver 兼容）`test/state.test.ts`（隐藏/撤回两阶段/复活/清空）`test/hash.test.ts` `test/roundtrip.test.ts`（diff→render→parse→rebind→applyOps 全链路，含墓碑直通）`test/fsio.test.ts`（joinPath/promptName，v1.5）。
+当前测试（`bun test`）：11 个文件、154 例。`test/ir.test.ts` `test/changes.test.ts` `test/diffview.test.ts`（句级 diff）`test/promptmd.test.ts`（§3 往返 + 生命周期/C 类 + semver 兼容）`test/state.test.ts`（隐藏/撤回两阶段/复活/清空）`test/hash.test.ts` `test/roundtrip.test.ts`（diff→render→parse→rebind→applyOps 全链路，含墓碑直通）`test/fsio.test.ts`（路径 helper + 防抖写入隔离/串行化）`test/htmlguard.test.ts` `test/indent.test.ts` `test/linkref.test.ts`。
 
 ## 8. 已知边界（v2 候选，现在不写）
 

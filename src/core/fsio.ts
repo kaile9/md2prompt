@@ -131,39 +131,82 @@ export function resetDoc(name = '未命名.md'): void { // 新建：清空句柄
   void idb('readwrite', s => s.clear()).catch(() => {});
 }
 
-/** 防抖通道：多次调用合并为一次落盘；返回的 Promise 在落盘（或确认无目标）后兑现。 */
-function channel(flush: () => Promise<void>): () => Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let waiters: (() => void)[] = [];
-  return () =>
+/** 防抖通道：同一目标的调用合并，目标之间隔离；所有提交串行，句柄别名也不能让旧写晚于新写落盘。 */
+function channel<K, V>(flush: (key: K, value: V) => Promise<void>): (key: K, value: V) => Promise<void> {
+  interface Slot {
+    timer?: ReturnType<typeof setTimeout>;
+    latest: V;
+    waiters: (() => void)[];
+    chain: Promise<void>;
+  }
+  const slots = new Map<K, Slot>();
+  let commits = Promise.resolve();
+  return (key, value) =>
     new Promise<void>(res => {
-      waiters.push(res);
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        const ws = waiters;
-        waiters = [];
-        void flush().then(() => ws.forEach(w => w()));
+      let slot = slots.get(key);
+      if (!slot) {
+        slot = { latest: value, waiters: [], chain: Promise.resolve() };
+        slots.set(key, slot);
+      }
+      slot.latest = value;
+      slot.waiters.push(res);
+      clearTimeout(slot.timer);
+      slot.timer = setTimeout(() => {
+        slot!.timer = undefined;
+        const latest = slot!.latest;
+        const waiters = slot!.waiters;
+        slot!.waiters = [];
+        const run = (slot!.chain = commits = commits.then(() => flush(key, latest)).catch(() => {}));
+        void run.then(() => {
+          waiters.forEach(w => w());
+          if (slot!.chain === run && !slot!.timer && !slot!.waiters.length && slots.get(key) === slot) slots.delete(key);
+        });
       }, 800);
     });
 }
 let latestDoc = '';
-const docFlush = channel(async () => { if (fileHandle) await tracked(writeTo(fileHandle, latestDoc)); });
-export function saveDoc(t: string): Promise<void> { latestDoc = t; return docFlush(); }
-let latestPrompt = '';
-const promptFlush = channel(async () => {
-  if (dirHandle) await tracked(dirHandle.getFileHandle(promptName(docName), { create: true }).then(h => writeTo(h, latestPrompt)));
-});
-export function writePrompt(t: string): Promise<void> { latestPrompt = t; return promptFlush(); }
+const docFlush = channel<FileSystemFileHandle, string>((handle, text) => tracked(writeTo(handle, text)));
+export function saveDoc(t: string): Promise<void> {
+  latestDoc = t;
+  const target = fileHandle;
+  return target ? docFlush(target, t) : Promise.resolve();
+}
+
+export interface PromptTarget { dir: FileSystemDirectoryHandle; name: string }
+const promptTargets = new WeakMap<FileSystemDirectoryHandle, Map<string, PromptTarget>>();
+export function capturePromptTarget(): PromptTarget | null {
+  if (!dirHandle) return null;
+  const name = promptName(docName);
+  let byName = promptTargets.get(dirHandle);
+  if (!byName) {
+    byName = new Map();
+    promptTargets.set(dirHandle, byName);
+  }
+  let target = byName.get(name);
+  if (!target) {
+    target = { dir: dirHandle, name };
+    byName.set(name, target);
+  }
+  return target;
+}
+const promptFlush = channel<PromptTarget, string>((target, text) =>
+  tracked(target.dir.getFileHandle(target.name, { create: true }).then(h => writeTo(h, text))),
+);
+export function writePrompt(t: string, target = capturePromptTarget()): Promise<void> {
+  return target ? promptFlush(target, t) : Promise.resolve();
+}
 
 export async function saveDocAs(t: string): Promise<boolean> { // 显式保存（新文档首次保存 / fallback 下载）
   latestDoc = t;
   if (!hasFS || !window.showSaveFilePicker) { downloadFile(docName, t); return true; }
   try {
     const h = await window.showSaveFilePicker({ suggestedName: docName, types: ACCEPT });
-    await tracked(writeTo(h, t));
+    const selected = latestDoc; // 选择器打开期间可能已有新输入，不能写调用时的旧快照
+    await tracked(writeTo(h, selected));
     setDoc(h, h.name);
     void idbPut('file', h);
     await askDir(); // save-as 后补请目录授权，否则 Prompt.md 无法落盘
+    if (latestDoc !== selected) await saveDoc(latestDoc);
     return true;
   } catch { return false; }
 }

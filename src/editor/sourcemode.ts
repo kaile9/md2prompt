@@ -96,6 +96,11 @@ export function mountSource(el: HTMLElement, text: string, hooks: SourceHooks): 
   });
 }
 
+/** 非破坏性读取当前源码文本；切文档打开选择器前用于提交尾部输入，取消选择时保留撤销历史。 */
+export function peekSource(): string | undefined {
+  return view?.state.doc.toString();
+}
+
 /** 销毁并返回最终文本（防抖尾巴不丢字，语义同 destroyEditor）；未挂载时 undefined。 */
 export function destroySource(): string | undefined {
   clearTimeout(timer);

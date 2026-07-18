@@ -16,7 +16,7 @@ import * as fs from './core/fsio';
 import { hashText } from './core/hash';
 import { parsePrompt } from './core/promptmd';
 import { destroyEditor, mountEditor, moveBlock, peekText, runInline, scrollEditorBlock, setRevisions, currentBlockIndex, type EditorHooks } from './editor/editor';
-import { destroySource, mountSource, scrollSourceTo } from './editor/sourcemode';
+import { destroySource, mountSource, peekSource, scrollSourceTo } from './editor/sourcemode';
 import { renderStatic, type ResolveImage } from './editor/static';
 import { mountVirtualList, openRecordEditor } from './editor/records';
 import { closeFloater, floatRoot, openFloater, registerCloser } from './editor/floater';
@@ -149,8 +149,8 @@ function applySectionText(idx: number, text: string): void {
 }
 
 /** 预 flush：load/new/恢复前调用——旧文档的尾部输入先入账，再允许切换。 */
-function flushEditor(): void {
-  const t = destroyActive();
+function flushEditor(destroy = true): void {
+  const t = destroy ? destroyActive() : viewMode === 'render' ? peekText() : peekSource();
   if (t !== undefined && activeIdx >= 0 && store.state?.file.kind === 'md') applySectionText(activeIdx, t);
 }
 
@@ -577,6 +577,7 @@ document.addEventListener('md2p-jump', (ev) => {
 
 const cursorEl = document.getElementById('cursor-pos') as HTMLElement;
 let docMtime: number | undefined;
+let loadGeneration = 0;
 
 const fmtDT = (t: number): string => {
   const d = new Date(t);
@@ -593,8 +594,10 @@ document.addEventListener('md2p-print', () => {
 
 /* ---------- 打开 / 新建 / 恢复（§6） ---------- */
 
-async function loadDocFile(f: DocFile): Promise<void> {
-  flushEditor(); // flush 纪律：切换前旧文档尾部先入账
+async function loadDocFile(f: DocFile, currentFlushed = false, generation = ++loadGeneration): Promise<void> {
+  if (generation !== loadGeneration) return;
+  if (currentFlushed) destroyActive();
+  else flushEditor(); // 恢复/程序载入路径仍负责提交当前编辑器
   imgCache.clear();
   docMtime = f.mtime; // 打印页眉「源文件完成时间」
   // 写入档开启时先剥缩进：内存态与 op 载荷永不含全角空格缩进（协议配对在原文哈希上做，不受影响）
@@ -602,11 +605,15 @@ async function loadDocFile(f: DocFile): Promise<void> {
   const blocks = parseDoc(raw, f.kind);
   store.dispatch({ type: 'load', file: { name: f.name, kind: f.kind }, cur: blocks });
   const prompt = await fs.findSiblingPrompt(f.name);
+  if (generation !== loadGeneration) return;
   if (!prompt) return;
   try {
     const { meta } = parsePrompt(prompt);
-    if (meta.docHash !== (await hashText(f.text))) {
+    const currentHash = await hashText(f.text);
+    if (generation !== loadGeneration) return;
+    if (meta.docHash !== currentHash) {
       const pick = await choice(S.hashMismatch, [S.restoreNewBase, S.restoreTry, S.restoreIgnore]);
+      if (generation !== loadGeneration) return;
       if (pick === 2) {
         store.dispatch({ type: 'suppressPrompt' }); // 忽略：不覆写既有 Prompt.md
         return;
@@ -614,11 +621,13 @@ async function loadDocFile(f: DocFile): Promise<void> {
       if (pick !== 1) return; // 新基线（默认载入即基线）
     }
   } catch {
+    if (generation !== loadGeneration) return;
     store.dispatch({ type: 'suppressPrompt' }); // 解析失败的既有 Prompt.md 不被覆写（可能手改出错）
     return;
   }
   try {
     const { base, ops } = restoreFromPrompt({ name: f.name, kind: f.kind }, blocks, prompt);
+    if (generation !== loadGeneration) return;
     store.dispatch({ type: 'load', file: { name: f.name, kind: f.kind }, cur: blocks, base, ops });
     toast(S.restored);
   } catch {
@@ -627,11 +636,14 @@ async function loadDocFile(f: DocFile): Promise<void> {
 }
 
 async function openFlow(): Promise<void> {
+  flushEditor(false); // 文件选择器切换 fsio 目标前先提交 A；取消选择时不销毁当前编辑器
+  const generation = ++loadGeneration;
   const f = await fs.openDoc();
-  if (f) await loadDocFile(f);
+  if (f && generation === loadGeneration) await loadDocFile(f, true, generation);
 }
 
 function newFlow(): void {
+  loadGeneration++;
   flushEditor(); // flush 纪律
   fs.resetDoc();
   imgCache.clear();
@@ -853,11 +865,14 @@ store.subscribe(onState);
 // 重启恢复须用户手势（requestPermission 链）；已有文档时不覆盖用户意图
 window.addEventListener(
   'pointerdown',
-  () =>
+  (event) =>
     void (async () => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('#open-btn, #new-btn')) return;
       if (store.state) return;
+      const generation = ++loadGeneration;
       const f = await fs.restoreDoc();
-      if (f) await loadDocFile(f);
+      if (f && generation === loadGeneration) await loadDocFile(f, false, generation);
     })(),
   { once: true },
 );

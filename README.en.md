@@ -82,10 +82,10 @@ bun install
 bun run dev      # dev server
 bun run build    # produces a single dist/2youg1-md2prompt.html
 bun run check    # tsc --noEmit
-bun test         # 142 unit tests (pure-function core, full coverage)
+bun test         # 154 unit tests across 11 files
 ```
 
-E2E (Playwright, requires Node): `cd e2e && node life.mjs` (plus v13/note/srcmode/export/look and more suites).
+E2E (Playwright, requires Node): `life.mjs`, `v13.mjs`, `note.mjs`, `srcmode.mjs`, `export.mjs`, and `look.mjs` report failures with a non-zero exit code. The `qa15-*`, `perf*`, and screenshot scripts are manual probes, not automated gates.
 
 ## FAQ
 
@@ -93,7 +93,7 @@ E2E (Playwright, requires Node): `cd e2e && node life.mjs` (plus v13/note/srcmod
 
 **Does the AI need tool access to cooperate?** No — that's the point. Everything in Prompt.md is self-explanatory text; the AI reads it, knows exactly what to change and how, and returns the new full text. Zero function calls.
 
-**Where does my data go?** Nowhere. No network requests, no API, no telemetry. File I/O goes through the browser's File System Access API; handles live in your own IndexedDB.
+**Where does my data go?** The app does not upload documents to a server and has no server API or telemetry. File I/O goes through the browser's File System Access API; handles live in your own IndexedDB. Remote images in a document are fetched by the browser from their URLs, and following an external link visits that site.
 
 ## License
 
