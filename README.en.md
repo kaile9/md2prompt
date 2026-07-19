@@ -121,6 +121,8 @@ E2E (Playwright, requires Node): `life.mjs`, `v13.mjs`, `note.mjs`, `srcmode.mjs
 
 **Does the AI need tool access to cooperate?** No — that's the point. Everything in Prompt.md is self-explanatory text; the AI reads it, knows exactly what to change and how, and returns the new full text. Zero function calls.
 
+**Will you add a reverse-diff for the AI's edits?** No (a settled decision). A new version returned by the AI becomes the "new baseline"; your tracked changes restore on hash pairing and keep stacking — the collaboration stays a simple human→AI one-way protocol.
+
 **Where does my data go?** The app does not upload documents to a server and has no server API or telemetry (the CSP's `connect-src 'none'` backs this up). File I/O goes through the browser's File System Access API; handles live in your own IndexedDB. Remote images in a document are fetched by the browser from their URLs, and following an external link visits that site.
 
 **Is the 2.0 diary compatible with 1.x?** No (breaking change; local single-file workflow carries no legacy). Finish your 1.x sessions in 1.5.2 before upgrading.
