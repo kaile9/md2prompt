@@ -38,18 +38,19 @@ describe('全链路 round-trip', () => {
     expect(serializeBlocks(restored)).toBe('甲\n\n乙\n\n丙\n\n丁');
   });
 
-  test('真实 op 的 time 为 HH:MM 且协议往返不抛错', () => {
+  test('协议 2.0：time 不落盘；n 按 seq（修改顺序）排列', () => {
     const { prompt } = roundTrip(mapped([B('b1', '一', ''), B('b2', '二')]), mapped([B('b1', '一改', ''), B('b2', '二')]));
-    expect(prompt).toMatch(/time="\d{2}:\d{2}"/);
+    expect(prompt).not.toContain('time=');
+    expect(prompt).toMatch(/<revise n="\d+"/);
   });
 
-  test('外部生产者的 ISO time 被宽容归一化为本地 HH:MM', () => {
+  test('外部生产者的多余属性（time 等）被忽略', () => {
     const base = mapped([B('b1', '一', ''), B('b2', '二')]);
     const cur = mapped([B('b1', '一改', ''), B('b2', '二')]);
-    const ops = diffBlocks(base, cur).map((o) => ({ ...o, time: '2026-07-17T08:22:31.000Z' }));
+    const ops = diffBlocks(base, cur);
     const prompt = renderPrompt({ file: { name: 't.md', kind: 'md' }, base, cur, ops }, HASHES);
-    const parsed = parsePrompt(prompt);
-    expect(parsed.ops[0].time).toMatch(/^\d{2}:\d{2}$/);
+    const withTime = prompt.replace('<revise n="1"', '<revise n="1" time="2026-07-17T08:22:31Z"');
+    expect(parsePrompt(withTime).ops[0]).toMatchObject({ type: 'replace', time: '' });
   });
 
   test('重复文本块的删除按行号落回原位（不落文末）', () => {
@@ -68,10 +69,19 @@ describe('全链路 round-trip', () => {
 
   test('note 往返：行号保留并重绑到目标块', () => {
     const base = mapped([B('b1', '一', ''), B('b2', '二'), B('b3', '三')]);
-    const note: Op = { id: 'o1', type: 'note', blockId: 'b2', note: '这段重写', time: '13:05', line: base[1].lineStart };
+    const note: Op = { id: 'o1', type: 'note', blockId: 'b2', note: '这段重写', kind: 'request', time: '13:05', line: base[1].lineStart };
     const { prompt, restored } = roundTrip(base, base.map((b) => ({ ...b })), 'md', [note]);
-    expect(prompt).toContain('<request id="B1" line="3"');
+    expect(prompt).toContain('<note n="1" line="3" request="这段重写"></note>');
     expect(texts(restored)).toEqual(['一', '二', '三']);
+  });
+
+  test('swap 全链路：导出 → 恢复重绑 → 自逆还原块序', () => {
+    const base = mapped([B('b1', '甲', ''), B('b2', '乙'), B('b3', '丙')]);
+    const cur = mapped([B('b1', '甲', ''), B('b3', '丙'), B('b2', '乙')]);
+    const swap: Op = { id: 'o1', type: 'swap', blockId: 'b3', otherId: 'b2', a: 3, b: 5, firstA: '丙', firstB: '乙', time: '13:40', seq: 1 };
+    const { prompt, restored } = roundTrip(base, cur, 'md', [swap]);
+    expect(prompt).toContain('<swap n="1" a="3" b="5"><first>丙</first><first>乙</first></swap>');
+    expect(texts(restored)).toEqual(['甲', '乙', '丙']);
   });
 
   test('CRLF 文档：载荷含 \\r\\n 的块恢复不抛错且归一化相等', () => {
@@ -122,7 +132,7 @@ describe('全链路 round-trip', () => {
     expect(prompt).toContain('<withdrawn>');
     const r = restoreFromPrompt({ name: 't.md', kind: 'md' }, cur.map((b) => ({ ...b })), prompt);
     expect(texts(r.base)).toEqual(['一', '二']); // 墓碑不干扰重建
-    expect(r.ops.at(-1)).toMatchObject({ id: 'C1', state: 'withdrawn', before: '撤前', after: '撤后' });
+    expect(r.ops.at(-1)).toMatchObject({ state: 'withdrawn', before: '撤前', after: '撤后' });
   });
 
   test('patch 形全链路：导出 patch → 恢复展开 → base 逐字节相等', async () => {
@@ -143,7 +153,7 @@ describe('全链路 round-trip', () => {
     const r = restoreFromPrompt({ name: 't.md', kind: 'md' }, cur.map((b) => ({ ...b })), prompt);
     expect(texts(r.base)).toEqual(['头', b7before]); // patch 展开 + 逆序取反，逐字节相等
     // 篡改 after-hash → 恢复必须拒绝
-    const forged = prompt.replace(/<after-hash>blake3:[0-9a-f]{16}<\/after-hash>/, '<after-hash>blake3:0000000000000000</after-hash>');
+    const forged = prompt.replace(/<alter-hash>blake3:[0-9a-f]{16}<\/alter-hash>/, '<alter-hash>blake3:0000000000000000</alter-hash>');
     expect(() => restoreFromPrompt({ name: 't.md', kind: 'md' }, cur.map((b) => ({ ...b })), forged)).toThrow(/校验失败/);
   });
 });
@@ -159,10 +169,10 @@ describe('rejectOp 精确落位', () => {
     expect(serializeBlocks(rejected)).toBe('一\n\n\n二\n\n三');
   });
 
-  test('reject(move) 移回原位', () => {
+  test('reject(swap) 再换一次回原位', () => {
     const base = mapped([B('b1', '甲', ''), B('b2', '乙'), B('b3', '丙')]);
     const cur = mapped([B('b1', '甲', ''), B('b3', '丙'), B('b2', '乙')]);
-    const op: Op = { id: 'o1', type: 'move', blockId: 'b3', first: '丙', from: [5, 5], to: 3, time: '13:40' };
+    const op: Op = { id: 'o1', type: 'swap', blockId: 'b3', otherId: 'b2', a: 3, b: 5, firstA: '丙', firstB: '乙', time: '13:40' };
     const rejected = rejectOp(base, cur, op);
     expect(texts(rejected)).toEqual(['甲', '乙', '丙']);
   });

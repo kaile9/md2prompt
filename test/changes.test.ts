@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { applyOps, diffBlocks } from '../src/core/changes';
-import type { Block } from '../src/core/ir';
+import { applyOps, diffBlocks, rebindOps } from '../src/core/changes';
+import { blockLineMap, serializeBlocks, type Block, type Op } from '../src/core/ir';
+import { parsePrompt, renderPrompt } from '../src/core/promptmd';
 
 const B = (id: string, text: string, kind: Block['kind'] = 'para'): Block => ({
   id,
@@ -10,6 +11,11 @@ const B = (id: string, text: string, kind: Block['kind'] = 'para'): Block => ({
   lineEnd: 0,
 });
 const sig = (bs: Block[]) => bs.map((b) => `${b.id}::${b.text}`).join('|');
+const mapped = (bs: Block[]): Block[] => {
+  bs.forEach((b, i) => (b.gap = i ? '\n\n' : ''));
+  blockLineMap(bs);
+  return bs;
+};
 
 describe('diffBlocks', () => {
   test('替换：同 id 文本变化 → 单条 replace', () => {
@@ -55,6 +61,12 @@ describe('diffBlocks', () => {
     expect(ops.map((o) => o.type)).toEqual(['delete', 'insert']);
   });
 
+  test('LCS：7×7 候选在 DP 回溯时复用相似度结果，不因预算二次消耗退化', () => {
+    const base = Array.from({ length: 7 }, (_, i) => B(`b${i}`, `块${i}-${String.fromCharCode(0x4e00 + i).repeat(24)}`));
+    const cur = Array.from({ length: 7 }, (_, i) => B(`c${i}`, `块${i}-${String.fromCharCode(0x4e00 + i).repeat(23)}改`));
+    expect(diffBlocks(base, cur).map((o) => o.type)).toEqual(Array(7).fill('replace'));
+  });
+
   test('空 diff：两侧一致 → 无 op', () => {
     expect(diffBlocks([B('b1', '甲')], [B('b1', '甲')])).toEqual([]);
   });
@@ -83,5 +95,61 @@ describe('applyOps', () => {
   test('目标文本缺失时抛带 op id 的错', () => {
     const stale = [{ id: 'a:b9:replace', type: 'replace', blockId: 'b9', before: '不存在', after: '新', time: 't' } as const];
     expect(() => applyOps(base, [...stale], 1)).toThrow(/a:b9:replace/);
+  });
+
+  test('多个相邻 insert 正向重放保持目标顺序', () => {
+    const before = mapped([B('a', 'A'), B('b', 'B'), B('c', 'C')]);
+    const after = mapped([B('a', 'A'), B('x', 'X'), B('y', 'Y'), B('b', 'B'), B('c', 'C')]);
+    expect(applyOps(before, diffBlocks(before, after), 1).map((b) => b.text)).toEqual(after.map((b) => b.text));
+  });
+
+  test('文首 insert 迁移首块前缀后，后续 insert 的 line 锚仍准确', () => {
+    const before = mapped([B('a', 'A'), B('b', 'B'), B('c', 'C')]);
+    const after = mapped([B('x', 'X'), B('a', 'A'), B('y', 'Y'), B('b', 'B'), B('c', 'C')]);
+    const applied = applyOps(before, diffBlocks(before, after), 1);
+    expect(applied.map((b) => b.text)).toEqual(after.map((b) => b.text));
+    expect(serializeBlocks(applied)).toBe(serializeBlocks(after));
+  });
+
+  test('Prompt 恢复：多个相邻 delete 共享锚点时仍按原顺序插回', () => {
+    const before = mapped([B('a', 'A'), B('b', 'B'), B('c', 'C')]);
+    const after = mapped([B('a', 'A')]);
+    const prompt = renderPrompt(
+      { file: { name: 'a.md', kind: 'md' }, base: before, cur: after, ops: diffBlocks(before, after) },
+      { docHash: 'blake3:aa', baseHash: 'blake3:bb' },
+    );
+    expect(applyOps(after, parsePrompt(prompt).ops, -1).map((b) => b.text)).toEqual(before.map((b) => b.text));
+  });
+
+  test('Prompt 恢复：清除后续 insert 后，delete 优先锚到仍存活的后继块', () => {
+    const before = mapped([B('a', 'A'), B('b', 'B'), B('c', 'C'), B('d', 'D'), B('e', 'E')]);
+    const after = mapped([B('a', 'A'), B('c', 'C'), B('x', 'X'), B('y', 'Y'), B('z', 'Z'), B('e', 'E changed')]);
+    const prompt = renderPrompt(
+      { file: { name: 'a.md', kind: 'md' }, base: before, cur: after, ops: diffBlocks(before, after) },
+      { docHash: 'blake3:aa', baseHash: 'blake3:bb' },
+    );
+    expect(applyOps(after, parsePrompt(prompt).ops, -1).map((b) => b.text)).toEqual(before.map((b) => b.text));
+  });
+
+  test('swap 自逆：dir=±1 同形，再换一次还原', () => {
+    const before = mapped([B('a', 'A'), B('b', 'B'), B('c', 'C')]);
+    const swapped = mapped([B('b', 'B'), B('a', 'A'), B('c', 'C')]);
+    // 记录时居 a（小行号）侧者为 blockId：swapped 状态下 b 在 line1、a 在 line3
+    const swap: Op = { id: 's1', type: 'swap', blockId: 'b', otherId: 'a', a: 1, b: 3, firstA: 'B', firstB: 'A', time: '12:00' };
+    expect(applyOps(swapped, [swap], -1).map((x) => x.text)).toEqual(['A', 'B', 'C']);
+    expect(applyOps(before, [swap], 1).map((x) => x.text)).toEqual(['B', 'A', 'C']);
+  });
+
+  test('swap 恢复重绑：blockId 空时按首行文本 + 行号邻近定位两块', () => {
+    const cur = mapped([B('b', 'B'), B('a', 'A'), B('c', 'C')]);
+    const parsed: Op = { id: 'n2', seq: 2, type: 'swap', blockId: '', a: 1, b: 3, firstA: 'B', firstB: 'A', time: '' };
+    const [bound] = rebindOps(cur, [parsed]);
+    expect(bound).toMatchObject({ type: 'swap', blockId: 'b', otherId: 'a' });
+  });
+
+  test('swap 定位失败抛带 op id 的错（首行文本对不上）', () => {
+    const cur = mapped([B('a', 'A'), B('b', 'B')]);
+    const swap: Op = { id: 's9', type: 'swap', blockId: 'a', otherId: 'b', a: 1, b: 3, firstA: '不存在', firstB: 'B', time: '' };
+    expect(() => applyOps(cur, [swap], 1)).toThrow(/s9/);
   });
 });

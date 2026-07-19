@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** SPEC §2 核心类型 + §7 core/ir.ts 冻结签名。
  *  Block 是唯一文档单位；变更引擎只 diff Block 数组。 */
 
@@ -46,12 +47,18 @@ interface OpBase {
   seq?: number; // 诞生序号（v1.3 导出 id 稳定化：跨导出不变 → Agent 端缓存命中）；会话内分配
 }
 
+/** note 的三型（协议 2.0）：request=修改命令（请 Agent 执行）；suggest=修改建议（Agent 定夺）；
+ *  discuss=希望讨论（勿改文本）。缺省 request。 */
+export type NoteKind = 'request' | 'suggest' | 'discuss';
+
 export type Op =
   | (OpBase & { type: 'replace'; before: string; after: string; patch?: { del: string; ins: string }[]; afterHash?: string })
   | (OpBase & { type: 'insert'; after: string })
   | (OpBase & { type: 'delete'; before: string })
-  | (OpBase & { type: 'move'; first: string; from: [number, number]; to: number })
-  | (OpBase & { type: 'note'; note: string; quote?: string }); // B 类：文本不动；quote = 行内选段原文（v1.3）
+  // swap（协议 2.0，替代 move）：a<b 为记录时行号；blockId=现居 a 的块，otherId=现居 b 的块；
+  // firstA/firstB=两块首行文本（恢复重绑校验）。自逆：施加/撤回都是再换一次。diff 不产生 swap，仅显式命令。
+  | (OpBase & { type: 'swap'; a: number; b: number; firstA: string; firstB: string; otherId?: string })
+  | (OpBase & { type: 'note'; note: string; quote?: string; kind?: NoteKind }); // 文本不动；quote = 行内选段原文（v1.3）
 
 export interface DocState {
   file: { name: string; kind: 'md' | 'jsonl' | 'xml' };
@@ -62,6 +69,14 @@ export interface DocState {
 }
 
 export type DocKind = DocState['file']['kind'];
+
+/* ---- 提示词式标签区域（editor/htmlguard.ts 共享同一组规则，保证 IR 块 ≡ 编辑器围栏） ---- */
+/** 档一：整行只有开/闭/自闭合标签（可带属性），非标准 HTML 标签名。 */
+export const PROMPT_OPEN = /^\s{0,3}<([a-z][a-z0-9-]{1,24})(?:\s+(?:"[^"]*"|'[^']*'|[^'">])*)?>\s*$/;
+export const PROMPT_CLOSE = /^\s{0,3}<\/([a-z][a-z0-9-]{1,24})>\s*$/;
+export const DANGEROUS_TAG = /^(?:script|style|iframe|object|embed)$/;
+/** CommonMark type 6 块级标签（与 htmlguard 同表）。 */
+export const BLOCK6_TAG = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)$/;
 
 /** fsio 打开结果；类型放此共享，避免 core 内循环依赖。mtime = 源文件最后修改时间（打印页眉用）。 */
 export interface DocFile {
@@ -135,14 +150,16 @@ function parseMd(text: string): Block[] {
     });
     prevEnd = end;
   }
-  return finish(blocks, text, prevEnd, () => ({
-    id: 'b1',
-    kind: 'para',
-    text,
-    gap: '',
-    lineStart: 0,
-    lineEnd: 0,
-  }));
+  return mergeTagRegions(
+    finish(blocks, text, prevEnd, () => ({
+      id: 'b1',
+      kind: 'para',
+      text,
+      gap: '',
+      lineStart: 0,
+      lineEnd: 0,
+    })),
+  );
 }
 
 function parseJsonl(text: string): Block[] {
@@ -182,6 +199,37 @@ function finish(blocks: Block[], text: string, prevEnd: number, fallback: () => 
   return blocks;
 }
 
+/** 档一标签区域合并：开标签块（整行开标签、非标准名、非自闭合）到同名闭标签块的连续区块并为一块。
+ *  保证「IR 块 ≡ 编辑器 XML 卡围栏」1:1——装饰/光标/批注/跳转的节点序映射前提（v1.6 BUG5 根治）。
+ *  序列化不变量保持：合并块 text = 首块 text + Σ(gap+text)，与原文切片逐字节相等。
+ *  配对规则与 editor/htmlguard.ts 档一完全一致（同组正则）。 */
+function mergeTagRegions(blocks: Block[]): Block[] {
+  const out: Block[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    const open = b.kind === 'html' ? PROMPT_OPEN.exec(b.text) : null;
+    if (open && open[1] !== 'img' && !BLOCK6_TAG.test(open[1]) && !DANGEROUS_TAG.test(open[1]) && !/\/>\s*$/.test(b.text)) {
+      const closeRe = new RegExp(`^\\s{0,3}</${open[1]}>\\s*$`);
+      let end = -1;
+      for (let j = i + 1; j < blocks.length; j++) {
+        if (blocks[j].kind === 'html' && closeRe.test(blocks[j].text)) {
+          end = j;
+          break;
+        }
+      }
+      if (end > 0) {
+        let text = b.text;
+        for (let k = i + 1; k <= end; k++) text += (blocks[k].gap ?? '\n\n') + blocks[k].text;
+        out.push({ ...b, text });
+        i = end;
+        continue;
+      }
+    }
+    out.push(b);
+  }
+  return out;
+}
+
 function mdMeta(node: RootContent): Block['meta'] {
   if (node.type === 'heading') return { level: node.depth };
   if (node.type === 'code' && node.lang) return { lang: node.lang };
@@ -198,4 +246,79 @@ function jsonMeta(raw: string): NonNullable<Block['meta']> {
 
 function countNl(s: string): number {
   return s.match(/\n/g)?.length ?? 0;
+}
+
+/* ---- 节文本重解析（原 main.ts，v1.6 归位 core 可测） ---- */
+
+let idSeq = 0;
+/** 会话内新块 id（重解析/新增记录共用一支计数）。 */
+export const newBlockId = (): string => `n${++idSeq}`;
+
+/** 中段 id 继承：Map（kind+text → 下标队列）配对 O(n)（原 findIndex O(n²)，C2）。 */
+function inheritIds(fresh: Block[], old: Block[]): Block[] {
+  const byKey = new Map<string, number[]>();
+  old.forEach((o, oi) => {
+    const k = `${o.kind} ${o.text}`;
+    const q = byKey.get(k);
+    if (q) q.push(oi);
+    else byKey.set(k, [oi]);
+  });
+  const used = new Set<number>();
+  const idOf = fresh.map((f) => {
+    const q = byKey.get(`${f.kind} ${f.text}`);
+    const i = q?.shift();
+    if (i === undefined) return undefined;
+    used.add(i);
+    return old[i].id;
+  });
+  let oi = 0;
+  fresh.forEach((f, fi) => {
+    if (idOf[fi]) return;
+    while (oi < old.length && used.has(oi)) oi++;
+    if (oi < old.length && old[oi].kind === f.kind) {
+      idOf[fi] = old[oi].id;
+      used.add(oi);
+    }
+  });
+  return fresh.map((f, fi) => ({ ...f, id: idOf[fi] ?? newBlockId() }));
+}
+
+/** 增量重解析：新旧节文本从头/尾按块对齐（startsWith + 块边界校验），只对变更中段跑 remark。
+ *  全量是 O(节)，增量是 O(变更域)：300KB 节单块编辑 flush 341ms → 2.3ms（≈148×，v1.6 性能专项实测）。
+ *  头/尾块复用旧引用（id/meta 全保）；中段走 inheritIds；纯空白中段 = gap 变更，按 finish 语义吸收。 */
+export function reparseSection(text: string, old: Block[]): Block[] {
+  let head = 0;
+  let pos = 0;
+  while (head < old.length) {
+    const b = old[head];
+    const seg = (head === 0 ? '' : (b.gap ?? '\n\n')) + b.text; // 首块 gap 归零，与编辑器源文同口径
+    if (!text.startsWith(seg, pos)) break;
+    const next = pos + seg.length;
+    // 块边界校验：旧块是新块的前缀时不算对齐（'# 甲' ≠ '# 甲改'）——后继必须是换行或文末
+    if (next < text.length && text[next] !== '\n') break;
+    pos = next;
+    head++;
+  }
+  let tail = 0;
+  let end = text.length;
+  while (tail < old.length - head) {
+    const b = old[old.length - 1 - tail];
+    const seg = (b.gap ?? '\n\n') + b.text; // gap 自带换行边界，无需再校验前驱
+    const start = end - seg.length;
+    if (start < 0 || !text.startsWith(seg, start)) break;
+    end = start;
+    tail++;
+  }
+  if (head === 0 && tail === 0) return inheritIds(parseDoc(text, 'md'), old); // 全变：原路径
+  const heads = old.slice(0, head);
+  const tails = old.slice(old.length - tail);
+  const span = text.slice(pos, end);
+  if (span.trim() === '') {
+    // 纯 gap 变更：并入下一块 gap；文末则收编进末块 text（finish 语义）
+    if (tails.length) return [...heads, { ...tails[0], gap: span + (tails[0].gap ?? '\n\n') }, ...tails.slice(1)];
+    const last = heads[heads.length - 1];
+    return last ? [...heads.slice(0, -1), { ...last, text: last.text + span }] : heads;
+  }
+  const mid = inheritIds(parseDoc(span, 'md'), old.slice(head, old.length - tail));
+  return [...heads, ...mid, ...tails];
 }

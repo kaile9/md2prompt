@@ -31,12 +31,43 @@ test('load + patchCur：ops 恒等于 diff(base,cur)', () => {
   expect(store.state.ops[0].after).toBe('乙改');
 });
 
-test('addNote/recordMove 与 diff 合并按行排序', () => {
+test('addNote/recordSwap 与 diff 合并按行排序', () => {
   store.dispatch({ type: 'load', file: FILE, cur: [blk('b1', '甲'), blk('b2', '乙'), blk('b3', '丙')] });
   store.dispatch({ type: 'patchCur', cur: [blk('b1', '甲'), blk('b3', '丙'), blk('b2', '乙改')] });
   store.dispatch({ type: 'addNote', blockId: 'b1', note: '批注' });
-  store.dispatch({ type: 'recordMove', blockId: 'b2', first: '乙', from: [3, 3], to: 5 });
-  expect(store.state.ops.map((o: any) => o.type)).toEqual(['note', 'replace', 'move']);
+  store.dispatch({ type: 'recordSwap', blockId: 'b3', otherId: 'b2', a: 3, b: 5, firstA: '丙', firstB: '乙改' });
+  expect(store.state.ops.map((o: any) => o.type)).toEqual(['note', 'swap', 'replace']);
+});
+
+test('note.kind：addNote/editNote 三型入账与切换', () => {
+  store.dispatch({ type: 'load', file: FILE, cur: [blk('b1', '甲')] });
+  store.dispatch({ type: 'addNote', blockId: 'b1', note: 'n', kind: 'suggest' });
+  const op = store.state.ops[0];
+  expect(op.kind).toBe('suggest');
+  store.dispatch({ type: 'editNote', id: op.id, note: 'n2', kind: 'discuss' });
+  expect(store.state.ops[0]).toMatchObject({ note: 'n2', kind: 'discuss' });
+});
+
+test('swap 存活校验：块序还原（撤销）即自动销账', () => {
+  store.dispatch({ type: 'load', file: FILE, cur: [blk('b1', '甲'), blk('b2', '乙')] });
+  store.dispatch({ type: 'patchCur', cur: [blk('b2', '乙'), blk('b1', '甲')] }); // 调换后 b2 在前
+  store.dispatch({ type: 'recordSwap', blockId: 'b2', otherId: 'b1', a: 1, b: 3, firstA: '乙', firstB: '甲' });
+  expect(store.state.ops.map((o: any) => o.type)).toEqual(['swap']);
+  store.dispatch({ type: 'patchCur', cur: [blk('b1', '甲'), blk('b2', '乙')] }); // 还原原序 → 销账
+  expect(store.state.ops).toEqual([]);
+});
+
+test('swap 撤回与墓碑复活：自逆重放，块序两次交换', () => {
+  store.dispatch({ type: 'load', file: FILE, cur: [blk('b1', '甲'), blk('b2', '乙')] });
+  store.dispatch({ type: 'patchCur', cur: [blk('b2', '乙'), blk('b1', '甲')] });
+  store.dispatch({ type: 'recordSwap', blockId: 'b2', otherId: 'b1', a: 1, b: 3, firstA: '乙', firstB: '甲' });
+  const op = store.state.ops[0];
+  store.dispatch({ type: 'withdraw', id: op.id });
+  store.dispatch({ type: 'withdrawCommit', id: op.id });
+  expect(store.state.cur.map((b: any) => b.id)).toEqual(['b1', 'b2']); // 回滚
+  store.dispatch({ type: 'restore', id: store.state.withdrawn[0].id });
+  expect(store.state.cur.map((b: any) => b.id)).toEqual(['b2', 'b1']); // 复活 = 再换一次
+  expect(store.state.ops.map((o: any) => o.type)).toEqual(['swap']);
 });
 
 describe('隐藏（hide/unhide/hideAll）', () => {
@@ -160,11 +191,11 @@ test('未知 id：全部动作静默不动账', () => {
   expect(store.state.withdrawn).toEqual([]);
 });
 
-test('load 恢复：ops 参数分流——note/move 进人工集，墓碑进 withdrawn，A 类由 diff 重算', () => {
+test('load 恢复：ops 参数分流——note/swap 进人工集，墓碑进 withdrawn，revise 由 diff 重算', () => {
   const recovered = [
-    { id: 'x', type: 'replace', blockId: 'b1', before: '甲', after: '乙', time: '' },
-    { id: 'y', type: 'note', blockId: 'b1', note: 'n', time: '' },
-    { id: 'z', type: 'delete', blockId: 'b9', before: '撤', time: '', state: 'withdrawn' },
+    { id: 'n1', type: 'replace', blockId: 'b1', before: '甲', after: '乙', time: '', seq: 1 },
+    { id: 'n2', type: 'note', blockId: 'b1', note: 'n', time: '', seq: 2 },
+    { id: 'n3', type: 'delete', blockId: 'b9', before: '撤', time: '', state: 'withdrawn', seq: 3 },
   ];
   store.dispatch({ type: 'load', file: FILE, base: [blk('b1', '甲')], cur: [blk('b1', '乙')], ops: recovered as any });
   expect(store.state.ops.map((o: any) => o.type).sort()).toEqual(['note', 'replace']);
@@ -224,7 +255,42 @@ test('load 可延迟 Prompt 持久化，配对决策完成后再显式启动 sta
     store.dispatch({ type: 'persistPrompt' });
     await Bun.sleep(1700);
     expect(promptWrites).toHaveLength(1);
-    expect(promptWrites[0]).toContain('protocol: md2prompt/1.2.0');
+    expect(promptWrites[0]).toContain('protocol: md2prompt/2.0.0');
+    fs.resetDoc();
+  } finally {
+    if (original === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = original;
+  }
+});
+
+test('B2：恢复三选「忽略」后，后续编辑不再覆写既有 Prompt.md', async () => {
+  const promptWrites: string[] = [];
+  const docHandle = {
+    name: 'ignored.md',
+    async queryPermission() { return 'granted'; },
+    async requestPermission() { return 'granted'; },
+    async getFile() { return { text: async () => '初始', lastModified: 1 }; },
+    async createWritable() { return { async write() {}, async close() {} }; },
+  };
+  const promptHandle = {
+    async createWritable() {
+      return { async write(text: string) { promptWrites.push(text); }, async close() {} };
+    },
+  };
+  const dir = { async getFileHandle() { return promptHandle; } };
+  const original = (globalThis as any).window;
+  (globalThis as any).window = {
+    showOpenFilePicker: async () => [docHandle],
+    showDirectoryPicker: async () => dir,
+  };
+  try {
+    const fs = await import('../src/core/fsio');
+    await fs.openDoc();
+    store.dispatch({ type: 'load', file: FILE, cur: [blk('b1', '初始')], deferPrompt: true });
+    store.dispatch({ type: 'suppressPrompt' }); // 用户选「忽略」：不毁既有记录
+    store.dispatch({ type: 'patchCur', cur: [blk('b1', '编辑后')] }); // 首次编辑 commit
+    await Bun.sleep(1900);
+    expect(promptWrites).toEqual([]); // 全程不再覆写（旧版：首次编辑即破功）
     fs.resetDoc();
   } finally {
     if (original === undefined) delete (globalThis as any).window;

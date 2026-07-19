@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 // editor/richmedia.ts — mermaid 与 katex 的唯一加载点（SPEC §1：惰性初始化，首用才 import）。
 import 'katex/dist/katex.min.css';
 

@@ -88,20 +88,19 @@ await step('场景1：全文版导出', async () => {
   full = await page.evaluate(() => window.__md2p.buildPrompt(window.__md2p.store.state));
   const fm = full.split(/^---$/m)[1] ?? '';
   check('1.1 front matter 六字段齐',
-    ['protocol: md2prompt/1.2.0', 'doc: t.md', /^doc-hash: (blake3|sha3-256):/m, /^base-hash: (blake3|sha3-256):/m, 'pending: 1', 'withdrawn: 1']
+    ['protocol: md2prompt/2.0.0', 'doc: t.md', /^doc-hash: (blake3|sha3-256):/m, /^base-hash: (blake3|sha3-256):/m, 'changes: 1', 'withdrawn: 1']
       .every((x) => (typeof x === 'string' ? fm.includes(x) : x.test(fm))), fm.trim());
   check('1.2 front matter 无 kind/updated 行', !/^kind:/m.test(fm) && !/^updated:/m.test(fm), fm.trim());
-  check('1.3 隐藏 op 带 state="hidden"', /<edit [^>]*state="hidden"/.test(full), full.match(/<edit [^>]*>/g)?.join(' '));
-  check('1.4 <withdrawn> 区段存在且含 C1', full.includes('<withdrawn>') && /<edit id="C1" /.test(full), section(full, 'withdrawn') ?? '缺区段');
+  check('1.3 隐藏 op 带 state="hidden"', /<revise [^>]*state="hidden"/.test(full), full.match(/<revise [^>]*>/g)?.join(' '));
+  check('1.4 <withdrawn> 区段存在且含墓碑 revise', full.includes('<withdrawn>') && /<revise n="\d+"/.test(section(full, 'withdrawn') ?? ''), section(full, 'withdrawn') ?? '缺区段');
 });
 
 // ---- 场景 2：复制版 buildPrompt(state, true) ----
 await step('场景2：复制版导出', async () => {
   const copy = await page.evaluate(() => window.__md2p.buildPrompt(window.__md2p.store.state, true));
-  check('2.1 复制版无 <withdrawn>', !copy.includes('<withdrawn>'));
-  check('2.2 B 区段与全文版一致', section(copy, 'requests') === section(full, 'requests'));
-  check('2.3 A 区段与全文版一致', section(copy, 'edits') === section(full, 'edits'),
-    `full=${JSON.stringify(section(full, 'edits'))} copy=${JSON.stringify(section(copy, 'edits'))}`);
+  check('2.1 复制版无 <withdrawn> 与 withdrawn 计数行', !copy.includes('<withdrawn>') && !/^withdrawn:/m.test(copy));
+  check('2.2 <changes> 区段与全文版一致', section(copy, 'changes') === section(full, 'changes'),
+    `full=${JSON.stringify(section(full, 'changes'))} copy=${JSON.stringify(section(copy, 'changes'))}`);
 });
 
 // 截图：含 C 类墓碑的修订面板
@@ -126,7 +125,7 @@ await step('场景3：首行缩进三档', async () => {
   await page.locator('.settings-modal .seg label', { hasText: '写入文档' }).click();
   await page.waitForTimeout(250);
   const pWrite = await page.evaluate(() => window.__md2p.buildPrompt(window.__md2p.store.state));
-  check('3.3 写入档：Prompt 头部含排版要求行', pWrite.includes('> 排版要求：正文段落首行缩进两字符（已写入文档本体）。'));
+  check('3.3 写入档：Prompt 含 <format> 排版命令行', pWrite.includes('<format>中文首行缩进两字符</format>'));
   check('3.4 写入档：localStorage prefs.indent==="write"',
     await page.evaluate(() => JSON.parse(localStorage.getItem('md2prompt.prefs') ?? '{}').indent === 'write'));
 
@@ -136,14 +135,14 @@ await step('场景3：首行缩进三档', async () => {
   check('3.5 仅渲染档：<html data-indent="render">',
     await page.evaluate(() => document.documentElement.dataset.indent === 'render'));
   const pRender = await page.evaluate(() => window.__md2p.buildPrompt(window.__md2p.store.state));
-  check('3.6 仅渲染档：Prompt 无排版要求行', !pRender.includes('排版要求'));
+  check('3.6 仅渲染档：Prompt 无 <format> 行', !pRender.includes('<format>'));
 
   // 切回关闭
   await page.locator('.settings-modal .seg label', { hasText: '关闭' }).first().click();
   await page.waitForTimeout(250);
-  check('3.7 关闭档：data-indent="off" 且 Prompt 无要求行',
+  check('3.7 关闭档：data-indent="off" 且 Prompt 无 <format> 行',
     await page.evaluate(async () => document.documentElement.dataset.indent === 'off'
-      && !(await window.__md2p.buildPrompt(window.__md2p.store.state)).includes('排版要求')));
+      && !(await window.__md2p.buildPrompt(window.__md2p.store.state)).includes('<format>')));
 });
 
 // ---- 场景 4：行号栏开关 ----

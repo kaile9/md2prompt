@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** §3 规则 5：默认 BLAKE3（blake3: 前缀），解析器也接受 sha3-256:；大字符串分块异步。
  *  @noble/hashes v2 仅在带 .js 的子路径导出（exports map 无裸子路径键）。 */
 import { blake3 } from '@noble/hashes/blake3.js';

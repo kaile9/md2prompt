@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** §7 node view 注册表：mermaid / math / xmlcard / html-img / footnote / image，供 editor.ts 注册。
  *  渲染一律走 mddom/richmedia 统一管线（SPEC §4.2）；文案集中 ui/strings。 */
 import type { Node as PMNode } from 'prosemirror-model';

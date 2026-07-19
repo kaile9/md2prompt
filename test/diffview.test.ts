@@ -47,6 +47,24 @@ describe('sentDiff（句级显示粒度，v1.2）', () => {
     ]);
   });
 
+  test('文件名/版本号/缩略语不腰斩（BUG 1b：`SKILL.md`、v1.5.2、e.g.）', () => {
+    // 后随小写/CJK 不切；后随大写才切
+    expect(sentDiff('this `SKILL.md` is the whole skill.', 'this `SKILL.md` was the whole skill.')).toEqual([
+      { type: 'del', text: 'this `SKILL.md` is the whole skill.' },
+      { type: 'ins', text: 'this `SKILL.md` was the whole skill.' },
+    ]);
+    expect(sentDiff('升级到 v1.5.2 起生效。Next sentence here.', '升级到 v1.5.2 起失效。Next sentence here.')).toEqual([
+      { type: 'del', text: '升级到 v1.5.2 起生效。' },
+      { type: 'ins', text: '升级到 v1.5.2 起失效。' },
+      { type: 'same', text: 'Next sentence here.' },
+    ]);
+    expect(sentDiff('use e.g. this one. Try it.', 'use e.g. that one. Try it.')).toEqual([
+      { type: 'del', text: 'use e.g. this one.' },
+      { type: 'ins', text: 'use e.g. that one.' },
+      { type: 'same', text: ' Try it.' },
+    ]);
+  });
+
   test('还原不变量：same+del=before，same+ins=after', () => {
     const before = '第一段 keep 不变。第二段 remove 掉。';
     const after = '第一段 keep 不变。new 段落 add 进来。';

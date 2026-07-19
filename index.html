@@ -3,6 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- 单文件应用需 unsafe-inline（全部代码/样式内联）；收紧远程内容面：无网络请求、无插件、无框架、无表单（D-6）。
+       远程图片按 README 声明放行 https；data:/blob: 供内嵌图与目录句柄 object URL；KaTeX 字体为 data: -->
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+  />
   <link rel="icon" href="data:," />
   <title>2youg1的MD2Prompt</title>
 </head>

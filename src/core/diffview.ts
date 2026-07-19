@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** §4.1 句级行内 diff（显示用）：旧片段 del、新片段 ins、相同 same。
  *  v1.2：粒度从词级改为句级——修改以整句呈现（旧句删除线 + 新句高亮），
  *  不再出现逐字/逐词碎片（用户反馈 v1 bug 1）。协议层不受影响（Prompt.md 本就是整块 before/after）。 */
@@ -6,16 +7,25 @@ export interface DiffSeg {
   text: string;
 }
 
-/** 句边界：换行硬切；CJK 。！？；… 直切；ASCII .!?;: 仅在跟随空白/文末时切（防 e.g. / 1.5 误切）。
+/** 句边界：换行硬切；CJK 。！？；… 直切；ASCII .!?;: 仅在「后随空白 + 再下一个非空白字符
+ *  像句首」（大写/数字/开引号括号）时切——防 `SKILL.md`、v1.5.2、e.g.、U.S. 把一句话腰斩（BUG 1b）。
  *  终止符后的闭引号/括号并入本句。 */
 function splitSentences(t: string): string[] {
   const out: string[] = [];
   const closer = (c: string): boolean => '"\'”’）)】」』'.includes(c);
+  const starter = (c: string): boolean => /[A-Z0-9"'“‘「『（(\[]/.test(c);
+  const softCut = (i: number): boolean => {
+    let j = i + 1;
+    if (j >= t.length) return true;
+    if (!/\s/.test(t[j])) return false;
+    while (j < t.length && /\s/.test(t[j])) j++;
+    return j >= t.length || starter(t[j]);
+  };
   let s = 0;
   for (let i = 0; i < t.length; i++) {
     const c = t[i];
     const hard = c === '\n' || '。！？；…'.includes(c);
-    const soft = '.!?;:'.includes(c) && (i + 1 >= t.length || /\s/.test(t[i + 1]));
+    const soft = '.!?;:'.includes(c) && softCut(i);
     if (hard || soft) {
       let e = i + 1;
       while (e < t.length && closer(t[e])) e++;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import type { DocState, Op } from '../core/ir';
 import { buildPrompt, exportText, type Store } from '../core/state';
 import { downloadFile, joinPath, promptName } from '../core/fsio';
@@ -32,8 +33,8 @@ function opAnchor(op: Op): string {
       return firstLine(op.after);
     case 'delete':
       return firstLine(op.before);
-    case 'move':
-      return op.first;
+    case 'swap':
+      return `${firstLine(op.firstA)} ⇄ ${firstLine(op.firstB)}`;
     case 'note':
       return op.note;
   }
@@ -43,14 +44,14 @@ const OP_ICON: Record<Op['type'], string> = {
   replace: S.opReplace,
   insert: S.opInsert,
   delete: S.opDelete,
-  move: S.opMove,
+  swap: S.opSwap,
   note: S.opNote,
 };
 
-/** 行锚一律取活值：cur 优先、base 兜底；move 的 op.to 仅作块不在时的回退。 */
+/** 行锚一律取活值：cur 优先、base 兜底。 */
 function opLine(state: DocState, op: Op): number | null {
   const b = state.cur.find(x => x.id === op.blockId) ?? state.base.find(x => x.id === op.blockId);
-  return b?.lineStart ?? (op.type === 'move' ? op.to : null);
+  return b?.lineStart ?? null;
 }
 
 /** 跳转：blockId 为主锚，行号兜底（main 监听此事件落位）。 */
@@ -232,10 +233,17 @@ export function mountPanels(store: Store): void {
   const changes = document.getElementById('changes');
   if (!outline || !changes) return;
 
-  // 渲染缓存：HTML 未变不动 DOM，保住滚动位置（JSONL 万行大纲每击键重绘会卡）
+  // 渲染缓存：签名未变直接跳过（state.cur/ops/withDrawn 任一变化必换数组引用，commit 保证）——
+  // 万行 JSONL 大纲每击键重建字符串的 O(n) 模板拼接就此消除（性能专项）；HTML 未变再保 DOM（滚动位置）。
   let lastOutline = '';
   let lastChanges = '';
+  let lastSig: readonly unknown[] | null = null;
   const render = (state: DocState | null): void => {
+    const sig: readonly unknown[] = state
+      ? [state.file.name, state.cur, state.ops, state.withdrawn, tab, currentPrefs().dirPrefix]
+      : [null];
+    if (lastSig && sig.length === lastSig.length && sig.every((v, k) => v === lastSig![k])) return;
+    lastSig = sig;
     const og = outline.querySelector('.resize-grip');
     const cg = changes.querySelector('.resize-grip');
     const o = outlineShell(outlineHtml(state));

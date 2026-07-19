@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 // editor/mddom.ts — 唯一 markdown→DOM 渲染器（SPEC §4.1 静态渲染路线，v1.1 批准偏离 rehype）。
 // 不变量：源文只经 textContent 进 DOM；innerHTML 仅用于 katex/mermaid 的输出（richmedia）。
 // 消费方：static.ts（非活动节）、views.ts（XML 卡片/浮层预览）。

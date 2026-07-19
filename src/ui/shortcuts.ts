@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** ui/shortcuts.ts — 快捷键自定义（批次 4）：默认组合 + 用户覆盖（设置面板捕获录入）。
  *  匹配在 document 捕获阶段进行（先于 PM keymap），命中即 preventDefault 防双重触发。 */
 import { S } from './strings';

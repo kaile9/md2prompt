@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** editor/sourcemode.ts — 源码模式（批次 3）：CodeMirror 6 承载节源文。
  *  与渲染模式同一条 flush 管线（onChange 200ms 防抖 → applySectionText）；
  *  XML/图表在此永远以原文可见可改（转义灾难的最终保险）。修订痕迹属渲染模式，此处不画。 */
@@ -13,6 +14,8 @@ export interface SourceHooks {
   onChange(text: string): void;
   /** 光标行列（相对节内文本 1-based；状态栏复用渲染模式同一槽位）。 */
   onCursor?(line: number, col: number): void;
+  /** 选区变化：非空选区给纯文本与锚点坐标（选区浮卡/批注引用）；收起给 null。 */
+  onSelectText?(text: string | null, at?: { left: number; top: number }): void;
 }
 
 /** Markdown 语法高亮（VS Code 式 token 着色，颜色走主题 CSS 变量，三主题自适应）。 */
@@ -89,6 +92,16 @@ export function mountSource(el: HTMLElement, text: string, hooks: SourceHooks): 
             const pos = u.state.selection.main.head;
             const line = u.state.doc.lineAt(pos);
             hooks.onCursor?.(line.number, pos - line.from + 1);
+            if (hooks.onSelectText) {
+              const sel = u.state.selection.main;
+              if (sel.empty) {
+                hooks.onSelectText(null);
+              } else {
+                const text = u.state.sliceDoc(sel.from, sel.to).trim();
+                const at = view?.coordsAtPos(sel.to);
+                hooks.onSelectText(text || null, at ? { left: at.left, top: at.top } : undefined);
+              }
+            }
           }
         }),
       ],
@@ -114,10 +127,81 @@ export function destroySource(): string | undefined {
   return t;
 }
 
+/** 顶部可见行（节相对 1-based）与行内偏移比（分屏块锚滚动同步用，v1.6）。 */
+export function sourceTopLine(): { line: number; frac: number } | null {
+  const v = view;
+  if (!v) return null;
+  const st = v.scrollDOM.scrollTop;
+  const block = v.lineBlockAtHeight(st);
+  const line = v.state.doc.lineAt(block.from).number;
+  const frac = block.height > 0 ? Math.min(1, Math.max(0, (st - block.top) / block.height)) : 0;
+  return { line, frac };
+}
+
+/** 滚动到节内第 line 行并附加行内偏移比（分屏块锚滚动同步用，v1.6）。 */
+export function scrollSourceToFrac(line: number, frac: number): void {
+  const v = view;
+  if (!v) return;
+  const l = v.state.doc.line(Math.min(v.state.doc.lines, Math.max(1, line)));
+  const block = v.lineBlockAt(l.from);
+  v.scrollDOM.scrollTop = block.top + frac * block.height;
+}
+
 /** 滚动到节内第 line 行（1-based，节相对）并居中（源码/分屏跳转落点，v1.5.1）。 */
 export function scrollSourceTo(line: number): void {
   const v = view;
   if (!v) return;
   const l = v.state.doc.line(Math.min(v.state.doc.lines, Math.max(1, line)));
   v.dispatch({ effects: EditorView.scrollIntoView(l.from, { y: 'center' }) });
+}
+
+/* ---------- 行内格式命令（源码/分屏，BUG 4：选区浮卡在这些模式同样可用） ---------- */
+
+const SRC_MARKS: Record<string, [string, string]> = {
+  bold: ['**', '**'],
+  italic: ['*', '*'],
+  strike: ['~~', '~~'],
+  code: ['`', '`'],
+};
+
+/** 选区包裹/解裹标记；无选区时插入标记对并把光标放中间。 */
+export function runInlineSrc(a: 'bold' | 'italic' | 'strike' | 'code'): void {
+  const v = view;
+  if (!v) return;
+  const [l, r] = SRC_MARKS[a];
+  const { from, to } = v.state.selection.main;
+  const sel = v.state.sliceDoc(from, to);
+  if (sel.startsWith(l) && sel.endsWith(r) && sel.length > l.length + r.length) {
+    // 解裹：标记在选区内侧
+    v.dispatch({ changes: { from, to, insert: sel.slice(l.length, sel.length - r.length) } });
+  } else if (
+    v.state.sliceDoc(Math.max(0, from - l.length), from) === l &&
+    v.state.sliceDoc(to, Math.min(v.state.doc.length, to + r.length)) === r
+  ) {
+    // 解裹：标记紧贴选区外侧
+    v.dispatch({
+      changes: [
+        { from: from - l.length, to: from, insert: '' },
+        { from: to, to: to + r.length, insert: '' },
+      ],
+    });
+  } else {
+    v.dispatch({
+      changes: { from, to, insert: l + sel + r },
+      selection: { anchor: from + l.length, head: to + l.length },
+    });
+  }
+  v.focus();
+}
+
+/** 选区加链接（href 空则整链移除）；已是 [t](u) 形则替换目标。 */
+export function runLinkSrc(href: string): void {
+  const v = view;
+  if (!v) return;
+  const { from, to } = v.state.selection.main;
+  const sel = v.state.sliceDoc(from, to);
+  const m = /^\[([^\]]*)\]\([^)]*\)$/.exec(sel);
+  const text = m ? m[1] : sel || '链接文字';
+  v.dispatch({ changes: { from, to, insert: href ? `[${text}](${href})` : text } });
+  v.focus();
 }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import { S } from './strings';
 import { SC_DEFAULT, SC_LABEL, captureCombo, type ScAction } from './shortcuts';
 

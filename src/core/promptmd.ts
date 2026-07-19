@@ -1,22 +1,24 @@
-import type { DocState, Op } from './ir';
+// SPDX-License-Identifier: MPL-2.0
+import type { DocState, NoteKind, Op } from './ir';
 import { sentDiff } from './diffview';
 
-/** §3 front matter 需要的两个哈希；pending/withdrawn 由 render 内部生成。 */
+/** §3 front matter 需要的两个哈希；changes/withdrawn 由 render 内部生成。 */
 export interface PromptHashes {
   docHash: string; // blake3:… 或 sha3-256:…
   baseHash: string;
 }
 
-/** v1.1.0：kind/updated 移出协议（kind 由扩展名推断，文档级时间被 op.time 覆盖）。
- *  版本策略（SPEC §3 规则 6）：major 相同即向下兼容；读取容忍旧字段，写出只写当前版本。 */
+/** 协议 2.0：单流 <changes> 按 n（修改顺序）排列；note 三型 request/suggest/discuss；
+ *  revise 对应 replace/insert/delete（缺 original=新增，缺 alter=删除）；swap 自逆。
+ *  版本策略：只认 md2prompt/2.x（旧 1.x 不兼容，v2.0 起无历史包袱）。 */
 export interface PromptMeta {
-  protocol: string; // 'md2prompt/1.1.0'
+  protocol: string;
   doc: string;
   kind: DocState['file']['kind'];
   docHash: string;
   baseHash: string;
-  pending: number;
-  withdrawn: number;
+  changes: number; // 活跃条目数（note+revise+swap，含 hidden）
+  withdrawn: number; // 墓碑数（复制版省略此行与 <withdrawn> 区段）
 }
 
 /** 解析失败抛出，message 含 1-based 行号。 */
@@ -30,16 +32,20 @@ export class PromptParseError extends Error {
   }
 }
 
-const PROTOCOL = 'md2prompt/1.2.0';
-/** 兼容承诺：major=1 全部可读（含旧版裸 'md2prompt/1'）；major 不符拒绝。 */
-const PROTOCOL_OK = /^md2prompt\/1(?:\.\d+\.\d+)?$/;
+const PROTOCOL = 'md2prompt/2.0.0';
+const PROTOCOL_OK = /^md2prompt\/2(?:\.\d+\.\d+)?$/;
 const KINDS = new Set(['md', 'jsonl', 'xml']);
+const NOTE_KINDS = ['request', 'suggest', 'discuss'] as const;
 const kindOf = (doc: string): PromptMeta['kind'] =>
   /\.(jsonl|ndjson)$/i.test(doc) ? 'jsonl' : /\.xml$/i.test(doc) ? 'xml' : 'md';
 
-// 行内内容做 XML 转义；围栏内保持原文（围栏长度自适应，内容不可能撞闭合）。
+// 元素内容转义 &< >；属性值额外转义引号。围栏内保持原文（围栏长度自适应，内容不可能撞闭合）。
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const unesc = (s: string): string => s.replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+const escAttr = (s: string): string => esc(s).replace(/"/g, '&quot;');
+const unesc = (s: string): string =>
+  s.replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+const unescAttr = (s: string): string =>
+  s.replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
 
 /** 自适应围栏：反引号数 > 内容中最长反引号串，至少 3。 */
 function fenceFor(text: string): string {
@@ -48,36 +54,27 @@ function fenceFor(text: string): string {
   return '`'.repeat(Math.max(3, max + 1));
 }
 
-/** time 归一化为本地 HH:MM：HH:MM 原样；ISO 等 Date 可解析者转本地；其余原样（SPEC §3 规则 3 防御）。 */
-function hm(t: string): string {
-  if (/^\d{1,2}:\d{2}$/.test(t)) return t;
-  const d = new Date(t);
-  if (Number.isNaN(d.getTime())) return t;
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+/** <tag> 内容元素（单串返回）：单行内联；多行进围栏；JSONL 记录的一律 ```json 围栏。 */
+function content(tag: string, text: string, json: boolean): string {
+  if (!json && !text.includes('\n')) return `<${tag}>${esc(text)}</${tag}>`;
+  const fence = fenceFor(text);
+  return [`<${tag}>`, fence + (json ? 'json' : ''), text, fence, `</${tag}>`].join('\n');
 }
 
-/** 写 <tag> 内容元素：单行内联；多行进围栏；JSONL 记录的 before/after 一律 ```json 围栏。 */
-function pushContent(out: string[], tag: string, text: string, json: boolean): void {
-  if (!json && !text.includes('\n')) {
-    out.push(`<${tag}>${esc(text)}</${tag}>`);
-    return;
-  }
-  const fence = fenceFor(text);
-  out.push(`<${tag}>`, fence + (json ? 'json' : ''), text, fence, `</${tag}>`);
-}
+/** 子元素全部单行时整元素压成一行（省行数；note 直接坐进属性也是这个目的）。 */
+const elem = (open: string, children: string[], close: string): string[] =>
+  children.every((c) => !c.includes('\n')) ? [`${open}${children.join('')}${close}`] : [open, ...children, close];
 
 export interface RenderOpts {
-  /** false = 复制给 Agent 的版本：省略 C 类墓碑区段（默认 true，日记文件保留墓碑）。 */
+  /** false = 复制给 Agent 的版本：省略 <withdrawn> 区段与 withdrawn 计数行（默认 true，日记文件保留墓碑）。 */
   includeWithdrawn?: boolean;
-  /** 「首行缩进·写入文档」开启时向 Agent 声明排版要求（自然语言，v1.2）。 */
-  indentHint?: boolean;
-  /** 导出 id 解析器（v1.3 稳定编号：op 诞生序号 → 跨导出不变 → Agent 端缓存命中）。 */
-  ids?: (op: Op) => string;
-  /** patch 形 replace 的 after-hash 表（op.id → hashShort(after)）；有表且够省才换形。 */
+  /** 排版命令（一句一条，自然语言；没有就不发行。协议 2.0，未来可多条）。 */
+  formats?: string[];
+  /** patch 形 replace 的 alter-hash 表（op.id → hashShort(after)）；有表且够省才换形。 */
   patchHashes?: Map<string, string>;
 }
 
-/** patch 形判定（v1.3）：块 >200 字符、全部改动为「整句换整句」配对、patch 体量 ≤ 全文 60%（省 ≥40%）。
+/** patch 形判定：块 >200 字符、全部改动为「整句换整句」配对、patch 体量 ≤ 全文 60%（省 ≥40%）。
  *  纯插入/纯删除段不入 patch（定位不可靠），JSONL 记录永远全文形（原子单位）。
  *  锚点唯一性守卫：任一 hunk 的 del 在 before 或 ins 在 after 出现 >1 次即退全文
  *  （重复句会锚错——恢复静默重建错误 base，评审 B1）。 */
@@ -114,11 +111,25 @@ export function applyPatch(blockText: string, hunks: { del: string; ins: string 
   return out + blockText.slice(cursor);
 }
 
+/** 头部注释（唯一一行「教学」，自解释结构代替文档）：语义同位。
+ *  前提：原文是 Agent 写的，在其上下文/工作区中原样保留；行号基于当前文档（= 原文应用 revise 后的状态）。 */
+const HEAD_COMMENT =
+  '<!-- 这是人对文档的修改日记（原文在你上下文中；行号基于当前文档）：revise/swap=人已改完（理解即可）；note=人请你处理（request=照做，suggest=定夺，discuss=讨论）。 -->';
+
 export function renderPrompt(state: DocState, hashes: PromptHashes, opts: RenderOpts = {}): string {
   const json = state.file.kind === 'jsonl';
   const curById = new Map(state.cur.map((b) => [b.id, b]));
   const baseIdx = new Map(state.base.map((b, i) => [b.id, i]));
   const withdrawn = (state.withdrawn ?? []).filter((o) => o.state === 'withdrawn');
+  // 导出序 = n（修改顺序）：无 seq 的 op 按输入顺序兜底（maxSeq 之后续号，不撞既有 n；按 id 键控，墓碑展开不丢）
+  const nById = new Map<string, number>();
+  {
+    const all = [...state.ops, ...withdrawn];
+    const maxSeq = all.reduce((m, o) => Math.max(m, o.seq ?? 0), 0);
+    let auto = 0;
+    for (const o of all) nById.set(o.id, o.seq ?? maxSeq + ++auto);
+  }
+  const nOf = (op: Op): number => op.seq ?? nById.get(op.id) ?? 0;
 
   const lineAttr = (blockId: string): string => {
     const b = curById.get(blockId);
@@ -137,85 +148,66 @@ export function renderPrompt(state: DocState, hashes: PromptHashes, opts: Render
     return state.cur.length ? state.cur[state.cur.length - 1].lineEnd + 1 : 1;
   };
 
-  /** 单条 op → 元素行组。id 由调用方给（活跃 B/A 或墓碑 C）。withdrawing 按 pending 导出（预令不落盘）。 */
-  const element = (op: Op, id: string): string[] => {
+  /** 单条 op → 元素行组。withdrawing 按 pending 导出（预令不落盘）。 */
+  const element = (op: Op): string[] => {
+    const n = nOf(op);
     const st = op.state === 'hidden' ? ' state="hidden"' : '';
     if (op.type === 'note') {
-      const out = [`<request id="${id}"${lineAttr(op.blockId)} time="${hm(op.time)}"${st}>`];
+      const kind: NoteKind = op.kind ?? 'request';
       const b = curById.get(op.blockId);
-      if (b) {
-        const nl = b.text.indexOf('\n');
-        out.push(`<first>${esc(nl < 0 ? b.text : b.text.slice(0, nl))}</first>`);
-        if (nl >= 0) out.push(`<last>${esc(b.text.slice(b.text.lastIndexOf('\n') + 1))}</last>`);
-      }
-      if (op.quote) pushContent(out, 'quote', op.quote, false); // v1.3 行内选段原文
-      pushContent(out, 'note', op.note, false);
-      out.push('</request>');
-      return out;
+      const anchor = b
+        ? b.lineStart === b.lineEnd
+          ? ` line="${b.lineStart}"`
+          : ` lines="${b.lineStart}-${b.lineEnd}"`
+        : op.line !== undefined
+          ? ` line="${op.line}"`
+          : '';
+      const single = !op.note.includes('\n');
+      const open = `<note n="${n}"${anchor}${single ? ` ${kind}="${escAttr(op.note)}"` : ''}${st}>`;
+      const children: string[] = [];
+      if (!single) children.push(content(kind, op.note, false));
+      if (op.quote) children.push(content('range', op.quote, false)); // 行内选段原文；块级 note 靠行号锚（原文在 Agent 上下文中）
+      return elem(open, children, '</note>');
     }
-    const out: string[] = [];
-    if (op.type === 'move') {
-      out.push(`<edit id="${id}" type="move" from="${op.from[0]}-${op.from[1]}" to="${op.to}" time="${hm(op.time)}"${st}>`);
-      out.push(`<first>${esc(op.first)}</first>`);
-    } else {
-      let anchor = lineAttr(op.blockId);
-      if (op.type === 'delete') {
-        const l = delLine(op.blockId);
-        anchor = l === undefined ? '' : ` line="${l}"`;
-      }
-      // patch 形（v1.3）：够省且调用方给了 after-hash 才换形
-      const hunks = op.type === 'replace' && !json && opts.patchHashes ? planPatch(op) : null;
-      const ah = hunks ? opts.patchHashes?.get(op.id) : undefined;
-      if (op.type === 'replace' && hunks && ah) {
-        out.push(`<edit id="${id}" type="replace"${anchor} time="${hm(op.time)}" form="patch"${st}>`);
-        for (const h of hunks) {
-          pushContent(out, 'del', h.del, false);
-          pushContent(out, 'ins', h.ins, false);
-        }
-        out.push(`<after-hash>${ah}</after-hash>`);
-        if (op.note) pushContent(out, 'note', op.note, false); // patch 形同样携带批注（评审 B2）
-        out.push('</edit>');
-        return out;
-      }
-      out.push(`<edit id="${id}" type="${op.type}"${anchor} time="${hm(op.time)}"${st}>`);
-      if (op.type !== 'insert') pushContent(out, 'before', op.before, json);
-      if (op.type !== 'delete') pushContent(out, 'after', op.after, json);
+    if (op.type === 'swap') {
+      const a = curById.get(op.blockId)?.lineStart ?? op.a;
+      const b = (op.otherId ? curById.get(op.otherId)?.lineStart : undefined) ?? op.b;
+      return [`<swap n="${n}" a="${a}" b="${b}"${st}><first>${esc(op.firstA)}</first><first>${esc(op.firstB)}</first></swap>`];
     }
-    if (op.note) pushContent(out, 'note', op.note, false);
-    out.push('</edit>');
-    return out;
+    // revise：replace/insert/delete 的统一外名
+    let anchor = lineAttr(op.blockId);
+    if (!anchor && op.line !== undefined) anchor = ` line="${op.line}"`;
+    if (op.type === 'delete') {
+      const l = delLine(op.blockId) ?? op.line;
+      anchor = l === undefined ? '' : ` line="${l}"`;
+    }
+    // patch 形：够省且调用方给了 alter-hash 才换形
+    const hunks = op.type === 'replace' && !json && opts.patchHashes ? planPatch(op) : null;
+    const ah = hunks ? opts.patchHashes?.get(op.id) : undefined;
+    if (op.type === 'replace' && hunks && ah) {
+      const open = `<revise n="${n}"${anchor} form="patch"${st}>`;
+      const children: string[] = [];
+      for (const h of hunks) {
+        children.push(content('del', h.del, false));
+        children.push(content('ins', h.ins, false));
+      }
+      children.push(`<alter-hash>${ah}</alter-hash>`);
+      if (op.note) children.push(content('note', op.note, false));
+      return elem(open, children, '</revise>');
+    }
+    const open = `<revise n="${n}"${anchor}${st}>`;
+    const children: string[] = [];
+    if (op.type !== 'insert') children.push(content('original', op.before, json));
+    if (op.type !== 'delete') children.push(content('alter', op.after, json));
+    if (op.note) children.push(content('note', op.note, false));
+    return elem(open, children, '</revise>');
   };
 
-  const requests: string[] = [];
-  const edits: string[] = [];
-  let bn = 0;
-  let an = 0;
-  let cntB = 0;
-  let cntA = 0;
-  for (const op of state.ops) {
-    const given = opts.ids?.(op);
-    if (op.type === 'note') {
-      cntB++;
-      requests.push(...element(op, given ?? `B${++bn}`));
-    } else {
-      cntA++;
-      edits.push(...element(op, given ?? `A${++an}`));
-    }
-  }
-  const cLines: string[] = [];
-  let cn = 0;
-  for (const op of withdrawn) cLines.push(...element({ ...op, state: undefined }, `C${++cn}`));
-
-  const head = [
-    '# 修改记录 · ' + state.file.name,
-    '> 由 2youg1的MD2Prompt 生成。B 类 = 请求 Agent 修改；A 类 = 人已直接修改。行号基于当前文档。',
-    `> 本次：B 类请求 ${cntB} 条，A 类直接修改 ${cntA} 条${opts.includeWithdrawn !== false && withdrawn.length ? `，C 类墓碑 ${withdrawn.length} 条（无需执行）` : ''}。`,
-  ];
-  if (opts.indentHint) head.push('> 排版要求：正文段落首行缩进两字符（已写入文档本体）。');
-  const tail: string[] = [];
-  if (opts.includeWithdrawn !== false && cLines.length) {
-    tail.push('---', '', '> C 类 = 已撤回的修改（墓碑记录，无需执行；复制 Prompt 时自动省略）。', '', '<withdrawn>', ...cLines, '</withdrawn>', '');
-  }
+  // 单流按 n（修改顺序）排列；墓碑同形殿后
+  const active = [...state.ops].sort((x, y) => nOf(x) - nOf(y));
+  const tombs = [...withdrawn].sort((x, y) => nOf(x) - nOf(y));
+  const changesLines = active.flatMap(element);
+  const tombLines = tombs.flatMap((o) => element({ ...o, state: undefined }));
 
   return [
     '---',
@@ -223,28 +215,26 @@ export function renderPrompt(state: DocState, hashes: PromptHashes, opts: Render
     `doc: ${state.file.name}`,
     `doc-hash: ${hashes.docHash}`,
     `base-hash: ${hashes.baseHash}`,
-    `pending: ${state.ops.length}`,
-    // 复制版省略 C 类时该行一并省略（计数与内容不自相矛盾）
-    ...(opts.includeWithdrawn !== false ? [`withdrawn: ${withdrawn.length}`] : []),
+    `changes: ${state.ops.length}`,
+    // 复制版省略墓碑时该行一并省略；零墓碑也不发行（计数与内容不自相矛盾）
+    ...(opts.includeWithdrawn !== false && withdrawn.length ? [`withdrawn: ${withdrawn.length}`] : []),
     '---',
     '',
-    ...head,
+    `# 修改记录 · ${state.file.name}`,
+    HEAD_COMMENT,
+    ...(opts.formats ?? []).map((f) => `<format>${esc(f)}</format>`),
     '',
-    '<requests>',
-    ...requests,
-    '</requests>',
+    '<changes>',
+    ...changesLines,
+    '</changes>',
     '',
-    '---',
-    '',
-    '<edits>',
-    ...edits,
-    '</edits>',
-    '',
-    ...tail,
+    ...(opts.includeWithdrawn !== false && tombLines.length
+      ? ['---', '', '<!-- 墓碑：已撤回的修改，仅存档（复制 Prompt 时本区段自动省略）。 -->', '', '<withdrawn>', ...tombLines, '</withdrawn>', '']
+      : []),
   ].join('\n');
 }
 
-/** 只认 front matter + <requests>/<edits>/<withdrawn>；正文其余文字忽略，容忍手工加注。 */
+/** 只认 front matter + <changes>/<withdrawn>；正文其余文字（标题、注释、手工加注）忽略。 */
 export function parsePrompt(text: string): { meta: PromptMeta; ops: Op[] } {
   const lines = text
     .replace(/^﻿/, '')
@@ -269,7 +259,7 @@ export function parsePrompt(text: string): { meta: PromptMeta; ops: Op[] } {
     }
     const m = /^([\w-]+):\s*(.*)$/.exec(l);
     if (!m) continue; // 容忍注释/杂行
-    // 机器字段剥离行尾注释（SPEC 示例含之）；doc 是文件名，原样保留
+    // 机器字段剥离行尾注释；doc 是文件名，原样保留
     const v = m[1] === 'doc' ? m[2].trim() : m[2].replace(/\s+#.*$/, '').trim();
     kv.set(m[1], { v, line: i + 1 });
   }
@@ -282,7 +272,7 @@ export function parsePrompt(text: string): { meta: PromptMeta; ops: Op[] } {
   };
   const protocol = field('protocol');
   if (!PROTOCOL_OK.test(protocol)) fail(`未知 protocol：${protocol}`, kv.get('protocol')?.line);
-  // kind：v1.1.0 起移出协议（扩展名推断）；旧文件仍携带则校验后采用
+  // kind 不进协议（扩展名推断）；外部生产者仍携带则校验后采用
   const kindRaw = kv.get('kind')?.v;
   if (kindRaw !== undefined && !KINDS.has(kindRaw)) fail(`未知 kind：${kindRaw}`, kv.get('kind')?.line);
   const docHash = field('doc-hash');
@@ -293,11 +283,11 @@ export function parsePrompt(text: string): { meta: PromptMeta; ops: Op[] } {
   ] as const) {
     if (!/^(blake3|sha3-256):\S+$/.test(h)) fail(`${k} 须带 blake3:/sha3-256: 前缀：${h}`, kv.get(k)?.line);
   }
-  const pending = Number(field('pending'));
-  if (!Number.isInteger(pending) || pending < 0) fail(`pending 应为非负整数：${kv.get('pending')?.v}`, kv.get('pending')?.line);
+  const changesCount = Number(field('changes'));
+  if (!Number.isInteger(changesCount) || changesCount < 0) fail(`changes 应为非负整数：${kv.get('changes')?.v}`, kv.get('changes')?.line);
   const wdRaw = kv.get('withdrawn')?.v;
-  const withdrawn = wdRaw === undefined ? 0 : Number(wdRaw);
-  if (!Number.isInteger(withdrawn) || withdrawn < 0) fail(`withdrawn 应为非负整数：${wdRaw}`, kv.get('withdrawn')?.line);
+  const withdrawnCount = wdRaw === undefined ? 0 : Number(wdRaw);
+  if (!Number.isInteger(withdrawnCount) || withdrawnCount < 0) fail(`withdrawn 应为非负整数：${wdRaw}`, kv.get('withdrawn')?.line);
 
   const doc = field('doc');
   const meta: PromptMeta = {
@@ -306,26 +296,26 @@ export function parsePrompt(text: string): { meta: PromptMeta; ops: Op[] } {
     kind: (kindRaw as PromptMeta['kind'] | undefined) ?? kindOf(doc),
     docHash,
     baseHash,
-    pending,
-    withdrawn,
+    changes: changesCount,
+    withdrawn: withdrawnCount,
   };
 
-  // ---- <requests>/<edits>/<withdrawn> ----
+  // ---- <changes>/<withdrawn> ----
   const attrs = (s: string): Map<string, string> => {
     const m = new Map<string, string>();
     for (const a of s.matchAll(/([\w-]+)="([^"]*)"/g)) m.set(a[1], a[2]);
     return m;
   };
 
-  /** 读 <tag> 内容元素（lines[i] 为其首行）：单行内联或 <tag>+自适应围栏块；推进 i 过 </tag>。 */
-  const content = (tag: string): string => {
+  /** 读 <tag> 内容元素（lines[i] 为其首行）：单行内联（开标签可带属性）或 <tag>+自适应围栏块；推进 i 过 </tag>。 */
+  const contentOf = (tag: string): string => {
     const start = i + 1;
-    const inline = new RegExp(`^<${tag}>(.*)</${tag}>\\s*$`).exec(lines[i]);
+    const inline = new RegExp(`^<${tag}(?:\\s[^>]*)?>(.*)</${tag}>\\s*$`).exec(lines[i]);
     if (inline) {
       i += 1;
       return unesc(inline[1]);
     }
-    if (lines[i].trim() !== `<${tag}>`) fail(`期望 <${tag}>`, start);
+    if (!new RegExp(`^<${tag}(?:\\s[^>]*)?>\\s*$`).test(lines[i].trim())) fail(`期望 <${tag}>`, start);
     i += 1;
     const open = /^(`{3,})[a-z0-9]*\s*$/i.exec(lines[i] ?? '');
     if (!open) return fail(`<${tag}> 的多行内容须放进围栏`, start);
@@ -344,106 +334,123 @@ export function parsePrompt(text: string): { meta: PromptMeta; ops: Op[] } {
     return body.join('\n');
   };
 
-  /** 解析一个 <request>/<edit> 元素（lines[i] 为其标签行），推进 i 过闭合标签。tomb = C 类区段。 */
-  const element = (isReq: boolean, tomb: boolean): Op => {
+  const CHILD_TAGS = 'first|original|alter|del|ins|alter-hash|note|range|request|suggest|discuss';
+
+  /** 解析一个 <note>/<revise>/<swap> 元素（lines[i] 为其标签行），推进 i 过闭合标签。tomb = 墓碑区段。 */
+  const element = (tag: 'note' | 'revise' | 'swap', tomb: boolean): Op => {
     const start = i + 1;
     const a = attrs(lines[i]);
-    const id = a.get('id');
-    if (!id) return fail('元素缺少 id 属性', start);
-    const time = hm(a.get('time') ?? ''); // §3 规则 3：ISO 宽容归一
-    if (time && !/^\d{1,2}:\d{2}$/.test(time)) fail(`time 应为 HH:MM：${time}`, start);
-    // SPEC v1.1 裁决 1：line/lines 锚点保留进 op.line，恢复落位的数据源
+    const n = Number(a.get('n'));
+    if (!Number.isInteger(n) || n < 0) return fail('元素缺少合法 n 属性', start);
     const rawLine = a.get('line') ?? a.get('lines')?.split('-')[0];
     const line = rawLine === undefined ? undefined : Number(rawLine);
     if (line !== undefined && (!Number.isInteger(line) || line < 1)) return fail(`line/lines 属性非法：${rawLine}`, start);
     const ln = line === undefined ? {} : { line };
     const st = tomb ? { state: 'withdrawn' as const } : a.get('state') === 'hidden' ? { state: 'hidden' as const } : {};
-    const close = isReq ? '</request>' : '</edit>';
-    i += 1;
+    const close = `</${tag}>`;
     const child: Record<string, string> = {};
     const dels: string[] = [];
     const inss: string[] = [];
-    const seq: string[] = []; // del/ins 出现序：patch 要求严格交替（评审 m5）
-    while (i < lines.length && lines[i].trim() !== close) {
-      const m = /^<(first|last|note|before|after|quote|del|ins|after-hash)[>\s]/.exec(lines[i]);
-      if (m) {
-        const v = content(m[1]);
-        if (m[1] === 'del') {
-          dels.push(v);
-          seq.push('del');
-        } else if (m[1] === 'ins') {
-          inss.push(v);
-          seq.push('ins');
-        } else child[m[1]] = v;
-      } else i += 1; // 容忍元素内手工文字
-    }
-    if (i >= lines.length) fail(`元素未闭合（缺 ${close}）`, start);
-    i += 1;
-    const optNote = child.note ? { note: child.note } : {};
-    if (isReq) {
-      if (child.note === undefined) fail('<request> 缺少 <note>', start);
-      const optQuote = child.quote !== undefined ? { quote: child.quote } : {};
-      return { id, type: 'note', blockId: '', note: child.note, time, ...ln, ...st, ...optQuote };
-    }
-    // patch 形（v1.3）：del/ins 成对 + after-hash，before/after 由恢复侧展开
-    if (a.get('form') === 'patch') {
-      if (a.get('type') !== 'replace') return fail('form="patch" 仅用于 replace', start);
-      if (!dels.length || dels.length !== inss.length || seq.some((t, k) => t !== (k % 2 === 0 ? 'del' : 'ins')))
-        return fail('patch 需要严格交替的 <del>/<ins> 句对', start);
-      const afterHash = child['after-hash'];
-      if (!afterHash || !/^blake3:[0-9a-f]{16}$/.test(afterHash)) return fail('patch 缺少合法 <after-hash>', start);
-      const patch = dels.map((del, k) => ({ del, ins: inss[k] }));
-      return { id, type: 'replace', blockId: '', before: '', after: '', patch, afterHash, time, ...optNote, ...ln, ...st };
-    }
-    const need = (tag: string): string => {
-      const v = child[tag];
-      if (v === undefined) fail(`缺少 <${tag}>`, start);
-      return v;
+    const seqs: string[] = []; // del/ins 出现序：patch 要求严格交替
+    const firsts: string[] = [];
+    let range: string | undefined;
+    const addChild = (t: string, v: string): void => {
+      if (t === 'del') {
+        dels.push(v);
+        seqs.push('del');
+      } else if (t === 'ins') {
+        inss.push(v);
+        seqs.push('ins');
+      } else if (t === 'first') firsts.push(v);
+      else if (t === 'range') range = v;
+      else child[t] = v;
     };
-    switch (a.get('type')) {
-      case 'replace':
-        return { id, type: 'replace', blockId: '', before: need('before'), after: need('after'), time, ...optNote, ...ln, ...st };
-      case 'insert':
-        return { id, type: 'insert', blockId: '', after: need('after'), time, ...optNote, ...ln, ...st };
-      case 'delete':
-        return { id, type: 'delete', blockId: '', before: need('before'), time, ...optNote, ...ln, ...st };
-      case 'move': {
-        const from = /^(\d+)-(\d+)$/.exec(a.get('from') ?? '');
-        if (!from) return fail('move 需要 from="a-b"', start);
-        const to = Number(a.get('to'));
-        if (!Number.isInteger(to) || to < 1) fail('move 需要 to="n"', start);
-        return { id, type: 'move', blockId: '', first: need('first'), from: [Number(from[1]), Number(from[2])], to, time, ...optNote, ...st };
+    const openTrim = lines[i].trim();
+    if (openTrim.endsWith(close)) {
+      // 单行形（render 的 elem 压行产物）：子元素全为内联，逐个取出
+      i += 1;
+      const inner = openTrim.slice(openTrim.indexOf('>') + 1, openTrim.length - close.length);
+      const re = new RegExp(`<(${CHILD_TAGS})(?:\\s[^>]*)?>([\\s\\S]*?)<\\/\\1>`, 'g');
+      for (const m of inner.matchAll(re)) addChild(m[1], unesc(m[2]));
+    } else {
+      i += 1;
+      while (i < lines.length && lines[i].trim() !== close) {
+        const m = new RegExp(`^<(${CHILD_TAGS})[>\\s]`).exec(lines[i]);
+        if (m) addChild(m[1], contentOf(m[1]));
+        else i += 1; // 容忍元素内手工文字/注释
       }
-      default:
-        return fail(`未知 edit type：${a.get('type')}`, start);
+      if (i >= lines.length) fail(`元素未闭合（缺 ${close}）`, start);
+      i += 1;
     }
+    const base = { id: `n${n}`, seq: n, blockId: '', time: '', ...ln, ...st };
+    const optNote = child.note ? { note: child.note } : {};
+    if (tag === 'note') {
+      const attrKinds = NOTE_KINDS.filter((k) => a.has(k));
+      const childKinds = NOTE_KINDS.filter((k) => child[k] !== undefined);
+      if (attrKinds.length + childKinds.length > 1) return fail('note 只能有一种类型（request/suggest/discuss）', start);
+      const kind = (attrKinds[0] ?? childKinds[0] ?? 'request') as NoteKind;
+      const text = attrKinds[0] ? unescAttr(a.get(attrKinds[0]) ?? '') : childKinds[0] ? child[childKinds[0]] : undefined;
+      if (text === undefined) return fail('<note> 缺少 request/suggest/discuss', start);
+      const quote = range !== undefined ? { quote: range } : {};
+      return { ...base, type: 'note', note: text, kind, ...quote };
+    }
+    if (tag === 'swap') {
+      const sa = Number(a.get('a'));
+      const sb = Number(a.get('b'));
+      if (!Number.isInteger(sa) || !Number.isInteger(sb) || sa < 1 || sb <= sa) return fail('swap 需要 1 ≤ a < b 的行号', start);
+      if (firsts.length !== 2) return fail('swap 需要两个 <first>（两块首行）', start);
+      return { ...base, type: 'swap', a: sa, b: sb, firstA: firsts[0], firstB: firsts[1] };
+    }
+    // revise
+    if (a.get('form') === 'patch') {
+      if (!dels.length || dels.length !== inss.length || seqs.some((t, k) => t !== (k % 2 === 0 ? 'del' : 'ins')))
+        return fail('patch 需要严格交替的 <del>/<ins> 句对', start);
+      const alterHash = child['alter-hash'];
+      if (!alterHash || !/^blake3:[0-9a-f]{16}$/.test(alterHash)) return fail('patch 缺少合法 <alter-hash>', start);
+      const patch = dels.map((del, k) => ({ del, ins: inss[k] }));
+      return { ...base, type: 'replace', before: '', after: '', patch, afterHash: alterHash, ...optNote };
+    }
+    const before = child.original;
+    const after = child.alter;
+    if (before === undefined && after === undefined) return fail('<revise> 需要 original/alter 至少其一', start);
+    if (before === undefined) return { ...base, type: 'insert', after, ...optNote };
+    if (after === undefined) return { ...base, type: 'delete', before, ...optNote };
+    return { ...base, type: 'replace', before, after, ...optNote };
   };
 
   const ops: Op[] = [];
-  let sections = 0;
+  let sawChanges = false;
+  let sawWithdrawn = false;
   i += 1; // 跳过 front matter 结束 ---
   while (i < lines.length) {
     const t = lines[i].trim();
-    if (t !== '<requests>' && t !== '<edits>' && t !== '<withdrawn>') {
-      i += 1; // 标题、引言、手工加注一律忽略
+    if (t !== '<changes>' && t !== '<withdrawn>') {
+      i += 1; // 标题、注释、format、手工加注一律忽略
       continue;
     }
-    sections += 1;
-    const isReq = t === '<requests>';
     const tomb = t === '<withdrawn>';
-    const close = isReq ? '</requests>' : tomb ? '</withdrawn>' : '</edits>';
+    if (tomb) {
+      if (sawWithdrawn) fail('重复 <withdrawn> 区段');
+      sawWithdrawn = true;
+    } else {
+      if (sawChanges) fail('重复 <changes> 区段');
+      sawChanges = true;
+    }
+    const close = tomb ? '</withdrawn>' : '</changes>';
     i += 1;
     while (i < lines.length && lines[i].trim() !== close) {
-      const req = /^<request[\s>]/.test(lines[i]);
-      const edt = /^<edit[\s>]/.test(lines[i]);
-      // C 类区段同时容纳 request/edit 墓碑；B 区只 request、A 区只 edit
-      if (req && (isReq || tomb)) ops.push(element(true, tomb));
-      else if (edt && !isReq) ops.push(element(false, tomb));
+      const m = /^<(note|revise|swap)[\s>]/.exec(lines[i]);
+      if (m) ops.push(element(m[1] as 'note' | 'revise' | 'swap', tomb));
       else i += 1; // 区段内手工文字忽略
     }
     if (i >= lines.length) fail(`区段未闭合（缺 ${close}）`);
     i += 1;
   }
-  if (!sections) fail('缺少 <requests>/<edits> 结构');
+  if (!sawChanges) fail('缺少 <changes> 区段');
+  const activeCount = ops.filter((op) => op.state !== 'withdrawn').length;
+  const tombCount = ops.length - activeCount;
+  if (changesCount !== activeCount) fail(`changes=${changesCount} 与实际元素数 ${activeCount} 不符`, kv.get('changes')?.line);
+  if (wdRaw !== undefined && withdrawnCount !== tombCount)
+    fail(`withdrawn=${withdrawnCount} 与实际墓碑数 ${tombCount} 不符`, kv.get('withdrawn')?.line);
   return { meta, ops };
 }

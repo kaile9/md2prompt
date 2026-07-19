@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** §4.1 活动节 Milkdown 装配；修订可视化全走 ProseMirror decoration，不污染文本。
  *  flush 忠实（§4.1）：过滤默认改写源文的 remarkInlineLink 插件；XML/危险 html/孤立 img 经
  *  会话标记围栏保护（只拆自己生成的）；destroyEditor 返回最终文本（防抖尾巴不丢字）。
@@ -26,7 +27,7 @@ import { setBlockType, toggleMark, wrapIn } from 'prosemirror-commands';
 import { wrapInList } from 'prosemirror-schema-list';
 import type { Block, Op } from '../core/ir';
 import { project, sentDiff } from '../core/diffview';
-import { protectHtmlBlocks, restoreHtmlBlocks } from './htmlguard';
+import { protectHtmlBlocks, restoreHtmlBlocks, MD2P_LANG } from './htmlguard';
 import { linkrefToHtml } from './linkref';
 import { nodeViews, setViewHooks } from './views';
 import { centerOn, flashEl } from '../ui/progress';
@@ -41,8 +42,8 @@ const commonmarkFaithful = presetCommonmark.commonmark.filter((p) => p !== remar
 export interface EditorHooks {
   /** flush 当前节文本 → cur（防抖 200ms 后回调；切节时以 destroyEditor 返回值兜底）。 */
   onChange(sectionSource: string): void;
-  /** Alt+↑/↓ 显式移动命令已发生；blockIndex = 移动后顶层块序号，first = 被移动块首行文本（PM 现场值）。 */
-  onMoveBlock(dir: 1 | -1, blockIndex?: number, first?: string): void;
+  /** Alt+↑/↓ 显式调换已发生；first/firstOther = 被移动块与对调块的 PM 现场首行纯文本。 */
+  onMoveBlock(dir: 1 | -1, blockIndex?: number, first?: string, otherFirst?: string): void;
   /** 批注入口（Alt+M 或点击批注钉）；blockIndex = 顶层块序号，quote = 行内选段原文（无选区则缺省）。 */
   onAnnotate?(blockIndex: number, quote?: string): void;
   /** 选区变化：有非空选区时给纯文本与锚点坐标（批注浮钮用）；收起时给 null。 */
@@ -165,6 +166,20 @@ function nodeTextMap(node: PMNode, pos: number): { text: string; map: number[] }
   return { text, map };
 }
 
+/** code_block/math_block 的源文侧投影：PM 节点纯文本是「去围栏原文」，project() 会误吞字面标记，改用恒等投影。
+ *  XML 卡（md2prompt- 围栏）：before/after 即节点全文；真围栏/数学块：剥首末围栏行。 */
+const identityProj = (s: string): { plain: string; map: number[] } => ({
+  plain: s,
+  map: Array.from({ length: s.length }, (_, k) => k),
+});
+
+const stripFence = (s: string): string => {
+  const lines = s.split('\n');
+  if (/^(`{3,}|~{3,})/.test(lines[0] ?? '')) lines.shift();
+  if (/^\s*(`{3,}|~{3,})\s*$/.test(lines[lines.length - 1] ?? '')) lines.pop();
+  return lines.join('\n');
+};
+
 function replaceDecos(node: PMNode, pos: number, op: Extract<Op, { type: 'replace' }>): Decoration[] {
   // 撤回预令：新文本整句删除线预览 + 原文以「将恢复」幽灵块预置
   if (op.state === 'withdrawing') {
@@ -174,8 +189,19 @@ function replaceDecos(node: PMNode, pos: number, op: Extract<Op, { type: 'replac
     ];
   }
   const { text, map } = nodeTextMap(node, pos);
-  const pb = project(op.before);
-  const pa = project(op.after);
+  let pb: { plain: string; map: number[] };
+  let pa: { plain: string; map: number[] };
+  if (node.type.name === 'code_block') {
+    const isCard = MD2P_LANG.test(String(node.attrs.language ?? ''));
+    pb = identityProj(isCard ? op.before : stripFence(op.before));
+    pa = identityProj(isCard ? op.after : stripFence(op.after));
+  } else if (node.type.name === 'math_block') {
+    pb = identityProj(stripFence(op.before));
+    pa = identityProj(stripFence(op.after));
+  } else {
+    pb = project(op.before);
+    pa = project(op.after);
+  }
   const out: Decoration[] = [];
   let curA = 0; // pa.plain 游标（≈ PM 纯文本坐标）
   let curB = 0; // pb.plain 游标
@@ -250,8 +276,8 @@ function buildDecorations(doc: PMNode, rev: RevState): DecorationSet {
           decos.push(
             Decoration.node(pos, pos + node.nodeSize, { class: op.state === 'withdrawing' ? 'rev-will' : 'rev-ins' }),
           );
-        else if (op.type === 'move')
-          decos.push(Decoration.widget(pos + 1, widget('span', 'rev-moved', S.opMove), { side: -1, key: `mv-${op.id}` }));
+        else if (op.type === 'swap')
+          decos.push(Decoration.widget(pos + 1, widget('span', 'rev-moved', S.opSwap), { side: -1, key: `sw-${op.id}` }));
         else if (op.type === 'note') {
           // 行内批注：选段加虚线下划线（quote 可能含行内标记，投影后定位）
           if (op.quote) {
@@ -306,7 +332,7 @@ const revPlugin = new Plugin<DecorationSet>({
   props: { decorations: (state) => revKey.getState(state) },
 });
 
-/** Ctrl+A 护栏（QA F1/F2）：光标在 code_block（XML 保护围栏/mermaid 等）内时，
+/** Ctrl+A 护栏（QA F1/F2）：光标在 code_block / math_block（A-2 同型漏洞）内时，
  *  全选只收拢到本块文本——默认的 selectAll 会选满全文，接着打字就把受保护块换成普通段落，
  *  序列化器再把 `<` 转义成 `\<`、整块炸碎成多段。收拢后重打 = 块内文本替换，围栏存活。 */
 const codeSelectAllPlugin = new Plugin({
@@ -315,7 +341,8 @@ const codeSelectAllPlugin = new Plugin({
     handleKeyDown(view, ev) {
       if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== 'a' || ev.shiftKey || ev.altKey) return false;
       const { $from } = view.state.selection;
-      if ($from.parent.type.name !== 'code_block') return false;
+      const tn = $from.parent.type.name;
+      if (tn !== 'code_block' && tn !== 'math_block') return false;
       const start = $from.start();
       const end = start + $from.parent.content.size;
       if (end <= start) return false;
@@ -571,5 +598,5 @@ export function moveBlock(dir: 1 | -1): void {
   const newPos = dir === 1 ? pos + other.nodeSize : pos - other.nodeSize;
   tr.setSelection(Selection.near(tr.doc.resolve(newPos + 1)));
   view.dispatch(tr.scrollIntoView());
-  currentHooks?.onMoveBlock(dir, target, cur.textContent.split('\n', 1)[0] ?? '');
+  currentHooks?.onMoveBlock(dir, target, cur.textContent.split('\n', 1)[0] ?? '', other.textContent.split('\n', 1)[0] ?? '');
 }
