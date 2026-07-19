@@ -16,8 +16,8 @@ import { buildPrompt, getLastAction, getSaveState, restoreFromPrompt, setIndentW
 import * as fs from './core/fsio';
 import { hashText } from './core/hash';
 import { parsePrompt } from './core/promptmd';
-import { destroyEditor, mountEditor, moveBlock, peekText, runInline, scrollEditorBlock, setRevisions, currentBlockIndex, type EditorHooks } from './editor/editor';
-import { destroySource, mountSource, peekSource, scrollSourceTo, sourceTopLine, scrollSourceToFrac } from './editor/sourcemode';
+import { destroyEditor, mountEditor, moveBlock, peekText, runInline, runLink, scrollEditorBlock, setRevisions, currentBlockIndex, type EditorHooks } from './editor/editor';
+import { destroySource, mountSource, peekSource, scrollSourceTo, sourceTopLine, scrollSourceToFrac, runInlineSrc, runLinkSrc, type SourceHooks } from './editor/sourcemode';
 import { renderStatic, type ResolveImage } from './editor/static';
 import { mountVirtualList, openRecordEditor } from './editor/records';
 import { closeFloater, floatRoot, openFloater, openPopover, registerCloser } from './editor/floater';
@@ -203,6 +203,17 @@ function annotateFlow(blockIndex: number, quote?: string): void {
   });
 }
 
+/** 批注入口（BUG 4：三模式可用）：渲染=PM 顶层块序；源码/分屏=CM 选区起点行锚块（quote 来自各自选区上报）。 */
+function annotateAction(): void {
+  if (viewMode === 'render') return annotateFlow(currentBlockIndex(), fabQuote ?? undefined);
+  const st = store.state;
+  const s = sections[activeIdx];
+  if (!st || !s) return;
+  const abs = (st.cur[s.start]?.lineStart ?? 1) + srcCursor.line - 1;
+  const i = st.cur.findIndex((b, bi) => bi >= s.start && bi < s.end && b.lineStart <= abs && abs <= b.lineEnd);
+  if (i >= 0) annotateFlow(i - s.start, fabQuote ?? undefined);
+}
+
 /** destroy 后按原位重绘（annotateFlow 的 flush 收尾）。 */
 function restructurePaint(): void {
   const startId = sections[activeIdx]?.startId;
@@ -373,13 +384,17 @@ function activateInto(sec: HTMLElement, idx: number): void {
   activeIdx = idx;
   editingFile = st.file;
   sec.dataset.line = String(st.cur[s.start]?.lineStart ?? 1);
-  const srcHooks = {
+  const srcHooks: SourceHooks = {
     onChange: (text: string) => {
       if (!editorChangesPaused) applySectionText(activeIdx, text);
     },
     onCursor: (line: number, col: number) => {
       srcCursor = { line, col };
       cursorEl.textContent = S.cursorPos((st.cur[s.start]?.lineStart ?? 1) + line - 1, col);
+    },
+    onSelectText: (text, at) => {
+      fabQuote = text;
+      showSelection(text && at ? at : null);
     },
   };
   if (viewMode === 'split') {
@@ -856,7 +871,12 @@ applyPrefs();
 mountSettings();
 mountPanels(store);
 mountProgress();
-mountToolbar({ annotate: () => annotateFlow(currentBlockIndex(), fabQuote ?? undefined), swap: (anchor) => swapFlow(anchor) });
+mountToolbar({
+  annotate: () => annotateAction(),
+  swap: (anchor) => swapFlow(anchor),
+  inline: (a) => (viewMode === 'render' ? runInline(a) : runInlineSrc(a)),
+  link: (href) => (viewMode === 'render' ? runLink(href) : runLinkSrc(href)),
+});
 syncRail(store.state); // 初始无文档即隐藏工具轨
 setProgressMode(currentPrefs().progress);
 setIndentWrite(currentPrefs().indent === 'write'); // 首行缩进·写入文档：启动同步 + 设置变更同步
@@ -902,10 +922,10 @@ resizable('outline', 'md2prompt.w.outline', 160, 360, false);
 /* ---------- 快捷键分发（document 捕获阶段先于 PM keymap；设置面板可覆盖组合） ---------- */
 
 const scActions: Record<ScAction, () => void> = {
-  bold: () => runInline('bold'),
-  italic: () => runInline('italic'),
-  strike: () => runInline('strike'),
-  annotate: () => annotateFlow(currentBlockIndex(), fabQuote ?? undefined), // 带选区（评审 M2）
+  bold: () => (viewMode === 'render' ? runInline('bold') : runInlineSrc('bold')),
+  italic: () => (viewMode === 'render' ? runInline('italic') : runInlineSrc('italic')),
+  strike: () => (viewMode === 'render' ? runInline('strike') : runInlineSrc('strike')),
+  annotate: () => annotateAction(), // 带选区（评审 M2；BUG 4 起三模式可用）
   moveUp: () => moveBlock(-1),
   moveDown: () => moveBlock(1),
   sourceToggle: () => document.getElementById('mode-btn')?.click(),
@@ -916,7 +936,8 @@ document.addEventListener(
     if (!(ev.target as HTMLElement | null)?.closest?.('#doc')) return;
     const p = currentPrefs();
     for (const a of Object.keys(SC_DEFAULT) as ScAction[]) {
-      if (a !== 'sourceToggle' && viewMode !== 'render') continue; // 源码/分屏：除切模式键外放行给 CM（v1.5.1 修复 return 截断）
+      // 源码/分屏：行内格式/批注/切模式可用（BUG 4）；块移动仅渲染模式（PM 命令）
+      if (viewMode !== 'render' && a !== 'sourceToggle' && a !== 'annotate' && a !== 'bold' && a !== 'italic' && a !== 'strike') continue;
       if (comboOf(ev) === (p.shortcuts[a] ?? SC_DEFAULT[a])) {
         ev.preventDefault();
         ev.stopPropagation();

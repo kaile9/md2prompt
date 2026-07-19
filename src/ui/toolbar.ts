@@ -1,13 +1,15 @@
 /** ui/toolbar.ts — 竖直工具轨 + 选区浮卡（批次 4）。
  *  轨：块级动作（H1–H3/引用/列表/代码块/分割线/链接/图片），钉在编辑栏右缘、修订栏左边，纯图标+tooltip。
  *  卡：行内动作（B/I/S/行内码/链接/批注），选中文字才弹出，半透明不遮字，失焦/滚动即隐。 */
-import { runBlock, runInline, runInsert, runLink, type BlockAction, type InlineAction } from '../editor/editor';
+import { runBlock, runInsert, type BlockAction, type InlineAction } from '../editor/editor';
 import { openPopover } from '../editor/floater';
 import { S } from './strings';
 
 export interface ToolbarHooks {
   annotate(): void; // 批注（main 的 annotateFlow，带当前选区）
   swap(anchor: HTMLElement): void; // 与第 N 行所在块调换（协议 2.0 swap）
+  inline(a: InlineAction): void; // 行内格式（渲染=PM 命令；源码/分屏=文本包裹，由 main 分发）
+  link(href: string): void; // 选区链接（同上）
 }
 
 const RAIL: [BlockAction | 'link' | 'image' | 'swap', string, string][] = [
@@ -91,8 +93,8 @@ export function mountToolbar(hooks: ToolbarHooks): void {
       if (act === 'annotate') {
         card!.hidden = true;
         hooks.annotate();
-      } else if (act === 'link') askUrl(b, 'https://', (url) => runLink(url));
-      else runInline(act);
+      } else if (act === 'link') askUrl(b, 'https://', (url) => hooks.link(url));
+      else hooks.inline(act);
     });
     card.appendChild(b);
   }
