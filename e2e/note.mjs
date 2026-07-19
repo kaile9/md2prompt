@@ -77,9 +77,9 @@ await p.waitForTimeout(400);
 const note2 = await p.evaluate(() => window.__md2p.store.state.ops.find((x) => x.type === 'note')?.note);
 ok('6b. 批注已更新', note2 === '改成：请补一个过渡论证', note2 ?? '');
 
-// 7) 导出含 <quote>，且为修改后的 note
+// 7) 导出含 <range>（选段原文），且为修改后的 note（2.0：note 收进属性）
 const prompt = await p.evaluate(async () => await window.__md2p.buildPrompt(window.__md2p.store.state));
-ok('7. Prompt 含 quote 与新批注', prompt.includes('<quote>') && prompt.includes('改成：请补一个过渡论证'));
+ok('7. Prompt 含 range 与新批注', prompt.includes('<range>') && prompt.includes('改成：请补一个过渡论证'));
 
 // 8) 同块再次 Alt+M → 编辑模式（预填现有批注，不产生第二条）
 await p.click('#doc .ProseMirror p', { position: { x: 30, y: 10 } });

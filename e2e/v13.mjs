@@ -64,12 +64,12 @@ await step('场景1：id 稳定', async () => {
     const p1 = await t.prompt();
     t.patchPara(2, '第三段最后才被改写，作为新增的一笔。');
     const p2 = await t.prompt();
-    const ids = (p) => [...p.matchAll(/<edit id="(A\d+)"[^>]*>/g)].map((x) => x[1]);
+    const ids = (p) => [...p.matchAll(/<revise n="(\d+)"[^>]*>/g)].map((x) => x[1]);
     return { ids1: ids(p1), ids2: ids(p2), p1, p2 };
   }, DOC1);
-  check('1.1 首次导出两笔 A 类且 id 为 A1/A2', s1.ids1.length === 2 && s1.ids1[0] === 'A1' && s1.ids1[1] === 'A2', JSON.stringify(s1.ids1));
-  check('1.2 新增第三笔后前两笔 id 不变', s1.ids2.length === 3 && s1.ids2[0] === s1.ids1[0] && s1.ids2[1] === s1.ids1[1], `before=${JSON.stringify(s1.ids1)} after=${JSON.stringify(s1.ids2)}`);
-  check('1.3 新 op 分配新序号 A3', s1.ids2[2] === 'A3', JSON.stringify(s1.ids2));
+  check('1.1 首次导出两笔 revise 且 n 为 1/2', s1.ids1.length === 2 && s1.ids1[0] === '1' && s1.ids1[1] === '2', JSON.stringify(s1.ids1));
+  check('1.2 新增第三笔后前两笔 n 不变', s1.ids2.length === 3 && s1.ids2[0] === s1.ids1[0] && s1.ids2[1] === s1.ids1[1], `before=${JSON.stringify(s1.ids1)} after=${JSON.stringify(s1.ids2)}`);
+  check('1.3 新 op 分配新序号 3', s1.ids2[2] === '3', JSON.stringify(s1.ids2));
 });
 // 截图：两次导出 id 对比
 await step('截图 v13-01-id-stable', async () => {
@@ -115,7 +115,7 @@ await step('场景2：patch 形导出', async () => {
     cur.find((b) => b.kind === 'para').text = after;
     window.__md2p.store.dispatch({ type: 'patchCur', cur });
     const prompt = await t.prompt();
-    const el = prompt.match(/<edit id="A\d+"[\s\S]*?<\/edit>/)?.[0] ?? '';
+    const el = prompt.match(/<revise n="\d+"[\s\S]*?<\/revise>/)?.[0] ?? '';
     return {
       beforeLen: orig.length,
       prompt, el,
@@ -127,8 +127,8 @@ await step('场景2：patch 形导出', async () => {
   if (s2.error) return check('2.0 前置：等长换句', false, s2.error);
   check('2.0 前置：段落 >200 字符', s2.beforeLen > 200, `实际 ${s2.beforeLen}`);
   check('2.1 导出元素带 form="patch"', /form="patch"/.test(s2.el), s2.el.split('\n')[0]);
-  check('2.2 含 <after-hash>blake3:16hex</after-hash>', /<after-hash>blake3:[0-9a-f]{16}<\/after-hash>/.test(s2.el), s2.el.match(/<after-hash>[^<]*<\/after-hash>/)?.[0] ?? '缺失');
-  check('2.3 patch 元素无 <before>/<after> 全文', !s2.el.includes('<before>') && !s2.el.includes('<after>'), s2.el);
+  check('2.2 含 <alter-hash>blake3:16hex</alter-hash>', /<alter-hash>blake3:[0-9a-f]{16}<\/alter-hash>/.test(s2.el), s2.el.match(/<alter-hash>[^<]*<\/alter-hash>/)?.[0] ?? '缺失');
+  check('2.3 patch 元素无 <original>/<alter> 全文', !s2.el.includes('<original>') && !s2.el.includes('<alter>'), s2.el);
   check('2.4 <del>/<ins> 句对内容正确', s2.delLine === s2.origSent && s2.insLine === REPLACED, `del=${s2.delLine} ins=${s2.insLine}`);
   // restoreFromPrompt 不在 __md2p 钩子上，恢复路径由单测（roundtrip/promptmd）覆盖，此处止步于输出文本断言
 });
@@ -150,11 +150,11 @@ await step('场景3：小块回退', async () => {
     await t.load('t3.md', '短段落，不足五十字符。');
     t.patchPara(0, '短段落已被改写，仍然很短。');
     const prompt = await t.prompt();
-    const el = prompt.match(/<edit id="A\d+"[\s\S]*?<\/edit>/)?.[0] ?? '';
+    const el = prompt.match(/<revise n="\d+"[\s\S]*?<\/revise>/)?.[0] ?? '';
     return { el };
   });
   check('3.1 小块不带 form="patch"', !r.el.includes('form="patch"'), r.el.split('\n')[0]);
-  check('3.2 小块保留 <before>/<after>', r.el.includes('<before>') && r.el.includes('<after>'), r.el);
+  check('3.2 小块保留 <original>/<alter>', r.el.includes('<original>') && r.el.includes('<alter>'), r.el);
 });
 
 // ============ 场景 4：摘要行 ============
@@ -171,7 +171,7 @@ await step('场景4：摘要行', async () => {
     return { head: prompt.split('\n').slice(0, 14).join('\n'), ops: t.ops() };
   });
   check('4.0 前置：1 条 note + 2 条 replace', r.ops.filter((o) => o.type === 'note').length === 1 && r.ops.filter((o) => o.type === 'replace').length === 2, JSON.stringify(r.ops));
-  check('4.1 头部含「本次：B 类请求 1 条，A 类直接修改 2 条」', r.head.includes('本次：B 类请求 1 条，A 类直接修改 2 条'), r.head);
+  check('4.1 头部 changes 计数与语义注释行（2.0 摘要方式）', r.head.includes('changes: 3') && r.head.includes('revise/swap=人已改完'), r.head);
 });
 
 // ============ 场景 5：hidden 跨会话恢复（手动播种，等价 restoreFromPrompt 后的 load） ============
@@ -189,9 +189,9 @@ await step('场景5：hidden 跨会话', async () => {
     m.store.dispatch({ type: 'hide', id: op.id });
     const stateAfterHide = m.store.state.ops.find((o) => o.type === 'replace')?.state ?? null;
     const p1 = await t.prompt();
-    const hiddenId1 = p1.match(/<edit id="(A\d+)"[^>]*state="hidden"/)?.[1] ?? null;
+    const hiddenId1 = p1.match(/<revise n="(\d+)"[^>]*state="hidden"/)?.[1] ?? null;
 
-    // 模拟跨会话：重新打开同文档（无 sibling prompt 可寻），再按 Prompt.md 手动播种 ops
+    // 模拟跨会话：重新打开同文档（无 sibling prompt 可寻），再按 Prompt.md 手动播种 ops（2.0：id=n系、seq 随播种）
     await t.load('t5.md', doc);
     const base = m.parseDoc(doc, 'md');
     const target = base.find((b) => b.text === before2);
@@ -201,17 +201,17 @@ await step('场景5：hidden 跨会话', async () => {
       file: { name: 't5.md', kind: 'md' },
       cur,
       base,
-      ops: [{ id: hiddenId1 ?? 'A1', type: 'replace', blockId: target.id, before: before2, after: new2, time: '10:00', state: 'hidden' }],
+      ops: [{ id: `n${hiddenId1 ?? '1'}`, seq: Number(hiddenId1 ?? 1), type: 'replace', blockId: target.id, before: before2, after: new2, time: '10:00', state: 'hidden' }],
     });
     const restored = m.store.state.ops.find((o) => o.type === 'replace');
     const p2 = await t.prompt();
-    const hiddenId2 = p2.match(/<edit id="(A\d+)"[^>]*state="hidden"/)?.[1] ?? null;
+    const hiddenId2 = p2.match(/<revise n="(\d+)"[^>]*state="hidden"/)?.[1] ?? null;
     return { stateAfterHide, hiddenId1, hiddenId2, restoredState: restored?.state ?? null, restoredSeq: restored?.seq ?? null, opsAfter: t.ops() };
   }, { doc: DOC5, new2: NEW2 });
   check('5.1 hide 后 op.state==="hidden"', s5.stateAfterHide === 'hidden', s5.stateAfterHide ?? 'null');
-  check('5.2 导出带 state="hidden"（会话内）', !!s5.hiddenId1, `id=${s5.hiddenId1}`);
+  check('5.2 导出带 state="hidden"（会话内）', !!s5.hiddenId1, `n=${s5.hiddenId1}`);
   check('5.3 跨会话重载后 hidden 不复活成 pending', s5.restoredState === 'hidden', JSON.stringify(s5.opsAfter));
-  check('5.4 跨会话后导出 id 与会话内一致（seq 保留）', !!s5.hiddenId2 && s5.hiddenId2 === s5.hiddenId1, `会话内=${s5.hiddenId1} 重载后=${s5.hiddenId2} (seq=${s5.restoredSeq})`);
+  check('5.4 跨会话后导出 n 与会话内一致（seq 保留）', !!s5.hiddenId2 && s5.hiddenId2 === s5.hiddenId1, `会话内=${s5.hiddenId1} 重载后=${s5.hiddenId2} (seq=${s5.restoredSeq})`);
 });
 
 // ============ 场景 6：quote 恢复 → 文档选段下划线 ============
@@ -228,7 +228,7 @@ await step('场景6：quote 下划线恢复', async () => {
       file: { name: 't6.md', kind: 'md' },
       cur: blocks,
       base: blocks,
-      ops: [{ id: 'B1', type: 'note', blockId: target.id, note: '恢复进来的批注', quote: '插件只是薄层', time: '10:00' }],
+      ops: [{ id: 'n1', seq: 1, type: 'note', blockId: target.id, note: '恢复进来的批注', quote: '插件只是薄层', time: '10:00' }],
     });
     return { ops: t.ops() };
   });
@@ -258,19 +258,17 @@ await step('场景7：复制版 patch 形一致', async () => {
     const full = await t.prompt(false);
     const copy = await t.prompt(true);
     const section = (s, tag) => s.match(new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`))?.[0] ?? null;
-    const elF = full.match(/<edit id="A\d+"[\s\S]*?<\/edit>/)?.[0] ?? '';
-    const elC = copy.match(/<edit id="A\d+"[\s\S]*?<\/edit>/)?.[0] ?? '';
+    const elF = full.match(/<revise n="\d+"[\s\S]*?<\/revise>/)?.[0] ?? '';
+    const elC = copy.match(/<revise n="\d+"[\s\S]*?<\/revise>/)?.[0] ?? '';
     return {
-      copyPatch: elC.includes('form="patch"') && /<after-hash>blake3:[0-9a-f]{16}<\/after-hash>/.test(elC) && !elC.includes('<before>') && !elC.includes('<after>'),
+      copyPatch: elC.includes('form="patch"') && /<alter-hash>blake3:[0-9a-f]{16}<\/alter-hash>/.test(elC) && !elC.includes('<original>') && !elC.includes('<alter>'),
       elSame: elF === elC,
-      reqSame: section(full, 'requests') === section(copy, 'requests'),
-      editsSame: section(full, 'edits') === section(copy, 'edits'),
+      changesSame: section(full, 'changes') === section(copy, 'changes'),
       elC,
     };
   }, { doc: LONG_PARA + '\n\n结尾短段，不参与修改。', idx: 3, repl: REPLACED });
-  check('7.1 复制版 patch 元素同形（form/after-hash，无 before/after）', r.copyPatch, r.elC);
-  check('7.2 复制版 <edits> 与全文版逐字一致', r.editsSame && r.elSame, '');
-  check('7.3 复制版 <requests> 与全文版一致', r.reqSame, '');
+  check('7.1 复制版 patch 元素同形（form/alter-hash，无 original/alter）', r.copyPatch, r.elC);
+  check('7.2 复制版 <changes> 与全文版逐字一致', r.changesSame && r.elSame, '');
 });
 
 await browser.close();
