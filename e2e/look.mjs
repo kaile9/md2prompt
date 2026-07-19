@@ -182,9 +182,18 @@ ok('10b. 跳转精确居中（中段块 → 滚动比例≈0.5）', j.bid !== ''
 
 // 11) Alt+M 带选区 quote（评审 M2）
 await p.evaluate(() => document.getElementById('scroller').scrollTo({ top: 0 }));
-await p.click('#doc .ProseMirror p', { position: { x: 60, y: 14 } });
-await p.keyboard.press('Home'); // 字体度量差异下先归行首，再扩选（CI 曾因此漏选）
-for (let i = 0; i < 5; i++) await p.keyboard.press('Shift+ArrowRight');
+// 用 DOM Selection 直接选前 5 字（字体度量/焦点环境无关——CI 两次红点均为键鼠选区漏选）
+await p.evaluate(() => {
+  const pEl = document.querySelector('#doc .ProseMirror p');
+  const textNode = pEl.firstChild;
+  const range = document.createRange();
+  range.setStart(textNode, 0);
+  range.setEnd(textNode, Math.min(5, textNode.length));
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+});
+await p.waitForTimeout(400);
 await p.keyboard.press('Alt+m');
 await p.waitForTimeout(600);
 const pv = await p.evaluate(() => document.querySelector('#floater .floater-preview')?.textContent ?? '');
