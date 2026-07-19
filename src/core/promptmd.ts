@@ -159,8 +159,9 @@ export function renderPrompt(state: DocState, hashes: PromptHashes, opts: Render
       out.push(`<first>${esc(op.first)}</first>`);
     } else {
       let anchor = lineAttr(op.blockId);
+      if (!anchor && op.line !== undefined) anchor = ` line="${op.line}"`;
       if (op.type === 'delete') {
-        const l = delLine(op.blockId);
+        const l = delLine(op.blockId) ?? op.line;
         anchor = l === undefined ? '' : ` line="${l}"`;
       }
       // patch 形（v1.3）：够省且调用方给了 after-hash 才换形
@@ -420,7 +421,9 @@ export function parsePrompt(text: string): { meta: PromptMeta; ops: Op[] } {
   };
 
   const ops: Op[] = [];
-  let sections = 0;
+  let sawRequests = false;
+  let sawEdits = false;
+  let sawWithdrawn = false;
   i += 1; // 跳过 front matter 结束 ---
   while (i < lines.length) {
     const t = lines[i].trim();
@@ -428,9 +431,18 @@ export function parsePrompt(text: string): { meta: PromptMeta; ops: Op[] } {
       i += 1; // 标题、引言、手工加注一律忽略
       continue;
     }
-    sections += 1;
     const isReq = t === '<requests>';
     const tomb = t === '<withdrawn>';
+    if (isReq) {
+      if (sawRequests) fail('重复 <requests> 区段');
+      sawRequests = true;
+    } else if (tomb) {
+      if (sawWithdrawn) fail('重复 <withdrawn> 区段');
+      sawWithdrawn = true;
+    } else {
+      if (sawEdits) fail('重复 <edits> 区段');
+      sawEdits = true;
+    }
     const close = isReq ? '</requests>' : tomb ? '</withdrawn>' : '</edits>';
     i += 1;
     while (i < lines.length && lines[i].trim() !== close) {
@@ -444,6 +456,12 @@ export function parsePrompt(text: string): { meta: PromptMeta; ops: Op[] } {
     if (i >= lines.length) fail(`区段未闭合（缺 ${close}）`);
     i += 1;
   }
-  if (!sections) fail('缺少 <requests>/<edits> 结构');
+  if (!sawRequests) fail('缺少 <requests> 区段');
+  if (!sawEdits) fail('缺少 <edits> 区段');
+  const activeCount = ops.filter((op) => op.state !== 'withdrawn').length;
+  const withdrawnCount = ops.length - activeCount;
+  if (pending !== activeCount) fail(`pending=${pending} 与实际元素数 ${activeCount} 不符`, kv.get('pending')?.line);
+  if (withdrawn !== withdrawnCount)
+    fail(`withdrawn=${withdrawn} 与实际墓碑数 ${withdrawnCount} 不符`, kv.get('withdrawn')?.line ?? kv.get('pending')?.line);
   return { meta, ops };
 }

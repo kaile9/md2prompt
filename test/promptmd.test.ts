@@ -356,6 +356,27 @@ describe('协议 1.2.0：patch 形 / 稳定编号 / 摘要行', () => {
   });
 });
 
+test('insert 墓碑在块已离开 cur 后仍导出原 line 锚点', () => {
+  const cur = [blk('a', 'A', 1), blk('b', 'B', 3)];
+  const tomb: Op = { id: 'old', type: 'insert', blockId: 'gone', after: 'X', line: 3, time: '12:00', state: 'withdrawn' };
+  const text = renderPrompt(st({ name: 'a.md', kind: 'md' }, cur, cur, [], [tomb]), HASHES);
+  expect(text).toContain('<edit id="C1" type="insert" line="3" time="12:00">');
+  expect(parsePrompt(text).ops).toEqual([
+    { id: 'C1', type: 'insert', blockId: '', after: 'X', line: 3, time: '12:00', state: 'withdrawn' },
+  ]);
+});
+
+test('解析器拒绝计数不符或缺少 requests/edits 固定区段的截断协议', () => {
+  const empty = renderPrompt(st({ name: 'a.md', kind: 'md' }, [], [], []), HASHES);
+  expect(() => parsePrompt(empty.replace('pending: 0', 'pending: 1'))).toThrow(/pending/);
+  expect(() => parsePrompt(empty.replace('<requests>\n</requests>\n', ''))).toThrow(/requests/);
+  expect(() => parsePrompt(empty.replace('<edits>\n</edits>\n', ''))).toThrow(/edits/);
+
+  const tomb: Op = { id: 'old', type: 'insert', blockId: 'gone', after: 'X', line: 1, time: '12:00', state: 'withdrawn' };
+  const withTomb = renderPrompt(st({ name: 'a.md', kind: 'md' }, [], [], [], [tomb]), HASHES);
+  expect(() => parsePrompt(withTomb.replace('withdrawn: 1', 'withdrawn: 2'))).toThrow(/withdrawn/);
+});
+
 describe('坏输入：抛带行号的 PromptParseError', () => {
   const FM = 'protocol: md2prompt/1.2.0\ndoc: a.md\ndoc-hash: blake3:aa\nbase-hash: blake3:bb\npending: 0';
   const bad: [string, RegExp][] = [

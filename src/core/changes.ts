@@ -1,4 +1,4 @@
-import type { Block, Op } from './ir';
+import { blockLineMap, type Block, type Op } from './ir';
 
 /** 协议 time 一律本地 HH:MM（SPEC §3 规则 3）；state.ts 人工 op 同用。 */
 export const nowHM = (): string => {
@@ -31,15 +31,23 @@ export function diffBlocks(base: Block[], cur: Block[]): Op[] {
   if (ub.length > 0 && uc.length > 0) {
     const nb = ub.map((i) => norm(base[i].text));
     const nc = uc.map((j) => norm(cur[j].text));
-    // 规模护栏（防粘贴替换冻结主线程）：单对长度积超限跳过；全局评估预算 40 对
-    let budget = 40;
-    const sim = (i: number, j: number) => {
-      if (budget <= 0 || nb[i].length * nc[j].length > 250_000) return false;
-      budget -= 1;
-      return similarity(nb[i], nc[j]) > 0.6;
-    };
+    // 字符相似度护栏：单对长度积超限跳过；全局评估预算 40 对（DP 矩阵规模另行受审）。
     const m = ub.length;
     const n = uc.length;
+    let budget = 40;
+    const sims = new Map<number, boolean>();
+    const sim = (i: number, j: number): boolean => {
+      const key = i * n + j;
+      const cached = sims.get(key);
+      if (cached !== undefined) return cached;
+      if (budget <= 0 || nb[i].length * nc[j].length > 250_000) return false;
+      budget -= 1;
+      const matched = similarity(nb[i], nc[j]) > 0.6;
+      sims.set(key, matched);
+      return matched;
+    };
+    // 先覆盖同序候选，避免矩阵遍历方向把固定预算耗在远距离交叉配对上。
+    for (let i = 0; i < m && budget > 0; i++) sim(i, Math.round((i * (n - 1)) / Math.max(1, m - 1)));
     const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
     for (let i = m - 1; i >= 0; i--)
       for (let j = n - 1; j >= 0; j--)
@@ -113,10 +121,16 @@ export function diffBlocks(base: Block[], cur: Block[]): Op[] {
 
 /** dir=1 正向施加；dir=-1 逆序取反（恢复/导入重建 base 用；自底向上，高位 op 的行号在低位落位时仍有效）。
  *  每步校验目标文本（CRLF 归一化），失败抛带 op id 的错。
- *  重建的块（dir=1 insert / dir=-1 delete）kind 记为 'para'：Op 冻结类型不带 kind/meta。
- *  返回块的行号未重算，调用方负责 blockLineMap。 */
+ *  重建块沿用记录文档的 record kind，其余记为 para：Op 冻结类型不带更细 kind/meta。
+ *  结构变化后即时重算行号，保证后续 op.line 仍指向当前序列。 */
 export function applyOps(base: Block[], ops: Op[], dir: 1 | -1): Block[] {
   const arr = base.map((b) => ({ ...b }));
+  const rebuiltKind: Block['kind'] = base.some((b) => b.kind === 'record') ? 'record' : 'para';
+  blockLineMap(arr);
+  const restoredAt = new Map<number, Block>();
+  const lineShifts: { line: number; delta: number }[] = [];
+  const shiftedLine = (line?: number): number | undefined =>
+    line === undefined || line <= 0 ? line : lineShifts.reduce((n, change) => n + (change.line < line ? change.delta : 0), line);
   const order = ops.map((_, i) => i);
   if (dir === -1) order.reverse();
   for (const k of order) {
@@ -125,32 +139,75 @@ export function applyOps(base: Block[], ops: Op[], dir: 1 | -1): Block[] {
       case 'note':
         break; // B 类文本不动
       case 'replace': {
-        const i = locate(arr, op.id, op.blockId, dir === 1 ? op.before : op.after, op.line);
+        const i = locate(arr, op.id, op.blockId, dir === 1 ? op.before : op.after, shiftedLine(op.line));
+        const oldSpan = lineSpanAt(arr, i);
         arr[i] = { ...arr[i], text: dir === 1 ? op.after : op.before };
+        blockLineMap(arr);
+        if (dir === -1 && op.line !== undefined) lineShifts.push({ line: op.line, delta: lineSpanAt(arr, i) - oldSpan });
         break;
       }
       case 'insert':
-        if (dir === 1)
-          arr.splice(anchorAt(arr, ops, k, false), 0, { id: op.blockId, kind: 'para', text: op.after, lineStart: 0, lineEnd: 0 });
-        else arr.splice(locate(arr, op.id, op.blockId, op.after, op.line), 1);
+        if (dir === 1) {
+          insertAt(arr, anchorAt(arr, ops, k, false), { id: op.blockId, kind: rebuiltKind, text: op.after, lineStart: 0, lineEnd: 0 });
+          blockLineMap(arr);
+        } else {
+          const i = locate(arr, op.id, op.blockId, op.after, shiftedLine(op.line));
+          const span = lineSpanAt(arr, i);
+          removeAt(arr, i);
+          if (op.line !== undefined) lineShifts.push({ line: op.line, delta: -span });
+          blockLineMap(arr);
+        }
         break;
       case 'delete':
-        if (dir === 1) arr.splice(locate(arr, op.id, op.blockId, op.before, op.line), 1);
-        else arr.splice(anchorAt(arr, ops, k, true), 0, { id: op.blockId, kind: 'para', text: op.before, lineStart: 0, lineEnd: 0 });
+        if (dir === 1) {
+          removeAt(arr, locate(arr, op.id, op.blockId, op.before, op.line));
+          blockLineMap(arr);
+        } else {
+          const prior = op.line === undefined ? undefined : restoredAt.get(op.line);
+          const priorAt = prior ? arr.indexOf(prior) : -1;
+          const at = priorAt >= 0 ? priorAt : anchorAt(arr, ops, k, true, shiftedLine(op.line));
+          const restored: Block = { id: op.blockId, kind: rebuiltKind, text: op.before, lineStart: 0, lineEnd: 0 };
+          insertAt(arr, at, restored);
+          if (op.line !== undefined) restoredAt.set(op.line, restored);
+          blockLineMap(arr);
+        }
         break;
       case 'move': {
         // from/to 行号随编辑漂移，位置按锚点近似落位；diffBlocks 不产生 move，仅供显式命令/导入
         const i = arr.findIndex((b) => b.id === op.blockId);
         if (i < 0 || !eqText(arr[i].text.split('\n', 1)[0] ?? '', op.first))
           throw new Error(`applyOps: op ${op.id} 校验失败（blockId=${op.blockId}）`);
-        const [blk] = arr.splice(i, 1);
-        arr.splice(Math.min(anchorAt(arr, ops, k, dir === -1), arr.length), 0, blk);
+        const blk = removeAt(arr, i);
+        blockLineMap(arr);
+        const line = dir === -1 ? op.from[0] : op.to;
+        insertAt(arr, anchorAt(arr, ops, k, dir === -1, line), blk);
+        blockLineMap(arr);
         break;
       }
     }
   }
   return arr;
 }
+
+/** 结构编辑的 gap 纪律：首块携带文档前缀，其余重建块使用文档形态的标准分隔符。 */
+function insertAt(arr: Block[], index: number, block: Block): void {
+  const at = Math.min(Math.max(0, index), arr.length);
+  const separator = block.kind === 'record' || arr.some((b) => b.kind === 'record') ? '\n' : '\n\n';
+  if (at === 0) {
+    block.gap = arr[0]?.gap ?? '';
+    if (arr[0]) arr[0].gap = separator;
+  } else block.gap = separator;
+  arr.splice(at, 0, block);
+}
+
+function removeAt(arr: Block[], index: number): Block {
+  const [block] = arr.splice(index, 1);
+  if (index === 0 && arr[0]) arr[0].gap = block.gap ?? '';
+  return block;
+}
+
+const lineSpanAt = (arr: Block[], index: number): number =>
+  arr[index + 1] ? Math.max(1, arr[index + 1].lineStart - arr[index].lineStart) : Math.max(1, arr[index].lineEnd - arr[index].lineStart + 1);
 
 /** reject：cur 精确回滚该 op（SPEC §2）。delete/move 按 base 序邻近幸存块落位，保留原块 gap/meta。
  *  v1.2：撤回（withdraw）两阶段的第二击走这里；旧的 accept 语义已随「隐藏/撤回」生命周期移除。 */
@@ -266,12 +323,16 @@ function locate(arr: Block[], opId: string, blockId: string, text: string, line?
 }
 
 /** 落位：op.line（当前文档 1-based 行号）优先；0/缺失或 arr 未建行号时退回邻近 op 锚块启发式。 */
-function anchorAt(arr: Block[], ops: Op[], k: number, afterFirst: boolean): number {
-  const line = ops[k].line;
+function anchorAt(arr: Block[], ops: Op[], k: number, afterFirst: boolean, line = ops[k].line): number {
   if (line !== undefined && line > 0 && arr.some((b) => b.lineStart > 0)) {
     const i = arr.findIndex((b) => b.lineStart >= line);
     return i >= 0 ? i : arr.length; // 行号越出全文 = 插入点在文末（delLine 文末回退为末行+1）
   }
+  const hit = neighborAt(arr, ops, k, afterFirst);
+  return hit >= 0 ? hit : arr.length;
+}
+
+function neighborAt(arr: Block[], ops: Op[], k: number, afterFirst: boolean): number {
   const back = () => {
     for (let i = k - 1; i >= 0; i--) {
       const j = arr.findIndex((b) => b.id === ops[i].blockId);
@@ -286,8 +347,7 @@ function anchorAt(arr: Block[], ops: Op[], k: number, afterFirst: boolean): numb
     }
     return -1;
   };
-  const hit = afterFirst ? firstNonNeg(back, fwd) : firstNonNeg(fwd, back);
-  return hit >= 0 ? hit : arr.length;
+  return afterFirst ? firstNonNeg(back, fwd) : firstNonNeg(fwd, back);
 }
 
 const firstNonNeg = (f: () => number, g: () => number) => {
