@@ -246,3 +246,78 @@ function jsonMeta(raw: string): NonNullable<Block['meta']> {
 function countNl(s: string): number {
   return s.match(/\n/g)?.length ?? 0;
 }
+
+/* ---- 节文本重解析（原 main.ts，v1.6 归位 core 可测） ---- */
+
+let idSeq = 0;
+/** 会话内新块 id（重解析/新增记录共用一支计数）。 */
+export const newBlockId = (): string => `n${++idSeq}`;
+
+/** 中段 id 继承：Map（kind+text → 下标队列）配对 O(n)（原 findIndex O(n²)，C2）。 */
+function inheritIds(fresh: Block[], old: Block[]): Block[] {
+  const byKey = new Map<string, number[]>();
+  old.forEach((o, oi) => {
+    const k = `${o.kind} ${o.text}`;
+    const q = byKey.get(k);
+    if (q) q.push(oi);
+    else byKey.set(k, [oi]);
+  });
+  const used = new Set<number>();
+  const idOf = fresh.map((f) => {
+    const q = byKey.get(`${f.kind} ${f.text}`);
+    const i = q?.shift();
+    if (i === undefined) return undefined;
+    used.add(i);
+    return old[i].id;
+  });
+  let oi = 0;
+  fresh.forEach((f, fi) => {
+    if (idOf[fi]) return;
+    while (oi < old.length && used.has(oi)) oi++;
+    if (oi < old.length && old[oi].kind === f.kind) {
+      idOf[fi] = old[oi].id;
+      used.add(oi);
+    }
+  });
+  return fresh.map((f, fi) => ({ ...f, id: idOf[fi] ?? newBlockId() }));
+}
+
+/** 增量重解析：新旧节文本从头/尾按块对齐（startsWith + 块边界校验），只对变更中段跑 remark。
+ *  全量是 O(节)，增量是 O(变更域)：300KB 节单块编辑 flush 341ms → 2.3ms（≈148×，v1.6 性能专项实测）。
+ *  头/尾块复用旧引用（id/meta 全保）；中段走 inheritIds；纯空白中段 = gap 变更，按 finish 语义吸收。 */
+export function reparseSection(text: string, old: Block[]): Block[] {
+  let head = 0;
+  let pos = 0;
+  while (head < old.length) {
+    const b = old[head];
+    const seg = (head === 0 ? '' : (b.gap ?? '\n\n')) + b.text; // 首块 gap 归零，与编辑器源文同口径
+    if (!text.startsWith(seg, pos)) break;
+    const next = pos + seg.length;
+    // 块边界校验：旧块是新块的前缀时不算对齐（'# 甲' ≠ '# 甲改'）——后继必须是换行或文末
+    if (next < text.length && text[next] !== '\n') break;
+    pos = next;
+    head++;
+  }
+  let tail = 0;
+  let end = text.length;
+  while (tail < old.length - head) {
+    const b = old[old.length - 1 - tail];
+    const seg = (b.gap ?? '\n\n') + b.text; // gap 自带换行边界，无需再校验前驱
+    const start = end - seg.length;
+    if (start < 0 || !text.startsWith(seg, start)) break;
+    end = start;
+    tail++;
+  }
+  if (head === 0 && tail === 0) return inheritIds(parseDoc(text, 'md'), old); // 全变：原路径
+  const heads = old.slice(0, head);
+  const tails = old.slice(old.length - tail);
+  const span = text.slice(pos, end);
+  if (span.trim() === '') {
+    // 纯 gap 变更：并入下一块 gap；文末则收编进末块 text（finish 语义）
+    if (tails.length) return [...heads, { ...tails[0], gap: span + (tails[0].gap ?? '\n\n') }, ...tails.slice(1)];
+    const last = heads[heads.length - 1];
+    return last ? [...heads.slice(0, -1), { ...last, text: last.text + span }] : heads;
+  }
+  const mid = inheritIds(parseDoc(span, 'md'), old.slice(head, old.length - tail));
+  return [...heads, ...mid, ...tails];
+}

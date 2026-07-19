@@ -232,10 +232,17 @@ export function mountPanels(store: Store): void {
   const changes = document.getElementById('changes');
   if (!outline || !changes) return;
 
-  // 渲染缓存：HTML 未变不动 DOM，保住滚动位置（JSONL 万行大纲每击键重绘会卡）
+  // 渲染缓存：签名未变直接跳过（state.cur/ops/withDrawn 任一变化必换数组引用，commit 保证）——
+  // 万行 JSONL 大纲每击键重建字符串的 O(n) 模板拼接就此消除（性能专项）；HTML 未变再保 DOM（滚动位置）。
   let lastOutline = '';
   let lastChanges = '';
+  let lastSig: readonly unknown[] | null = null;
   const render = (state: DocState | null): void => {
+    const sig: readonly unknown[] = state
+      ? [state.file.name, state.cur, state.ops, state.withdrawn, tab, currentPrefs().dirPrefix]
+      : [null];
+    if (lastSig && sig.length === lastSig.length && sig.every((v, k) => v === lastSig![k])) return;
+    lastSig = sig;
     const og = outline.querySelector('.resize-grip');
     const cg = changes.querySelector('.resize-grip');
     const o = outlineShell(outlineHtml(state));

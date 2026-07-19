@@ -28,7 +28,8 @@ export function diffBlocks(base: Block[], cur: Block[]): Op[] {
   // 未匹配块两两算相似度，LCS 求保序最大配对
   const ub = base.map((_, i) => i).filter((i) => !pairedB.has(i));
   const uc = cur.map((_, i) => i).filter((i) => !pairedC.has(i));
-  if (ub.length > 0 && uc.length > 0) {
+  if (ub.length > 0 && uc.length > 0 && ub.length * uc.length <= 2_500_000) {
+    // dp 总量护栏（A-4）：m·n 超限跳过 LCS 整段退化 delete+insert，防主线程冻结（与单对长度积护栏同哲学）
     const nb = ub.map((i) => norm(base[i].text));
     const nc = uc.map((j) => norm(cur[j].text));
     // 字符相似度护栏：单对长度积超限跳过；全局评估预算 40 对（DP 矩阵规模另行受审）。

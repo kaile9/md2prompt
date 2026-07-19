@@ -8,7 +8,7 @@ import { mountPanels } from './ui/panels';
 import { centerOn, flashEl, mountProgress, refreshProgress, setProgressMode } from './ui/progress';
 import { mountToolbar, showSelection } from './ui/toolbar';
 import { SC_DEFAULT, comboOf, type ScAction } from './ui/shortcuts';
-import { parseDoc, serializeBlocks, type Block, type DocFile, type DocState } from './core/ir';
+import { parseDoc, serializeBlocks, reparseSection, newBlockId, type Block, type DocFile, type DocState } from './core/ir';
 import { withTombstones } from './core/changes';
 import { project } from './core/diffview';
 import { indentStrip } from './core/indent';
@@ -49,31 +49,6 @@ function splitSections(blocks: Block[]): Section[] {
 
 /** 节源文：首块 gap 归零（编辑器/静态渲染不吃前导分隔符）。 */
 const sliceText = (blocks: Block[]): string => serializeBlocks(blocks.map((b, i) => (i === 0 ? { ...b, gap: '' } : b)));
-
-/* ---------- 节文本重解析：id 继承（同文配对 → 原位同 kind 继承 → 新发），保 diff 账 ---------- */
-
-let idSeq = 0;
-
-function reparseSection(text: string, old: Block[]): Block[] {
-  const fresh = parseDoc(text, 'md');
-  const used = new Set<number>();
-  const idOf = fresh.map((f) => {
-    const i = old.findIndex((o, oi) => !used.has(oi) && o.kind === f.kind && o.text === f.text);
-    if (i < 0) return undefined;
-    used.add(i);
-    return old[i].id;
-  });
-  let oi = 0;
-  fresh.forEach((f, fi) => {
-    if (idOf[fi]) return;
-    while (oi < old.length && used.has(oi)) oi++;
-    if (oi < old.length && old[oi].kind === f.kind) {
-      idOf[fi] = old[oi].id;
-      used.add(oi);
-    }
-  });
-  return fresh.map((f, fi) => ({ ...f, id: idOf[fi] ?? `n${++idSeq}` }));
-}
 
 /* ---------- 图片解析（缓存 + 异步回填，§4.1） ---------- */
 
@@ -545,7 +520,7 @@ function appendRecord(): void {
       const st = store.state;
       if (!st) return;
       const meta = parseDoc(next, 'jsonl')[0]?.meta;
-      const rec: Block = { id: `n${++idSeq}`, kind: 'record', text: next, lineStart: 0, lineEnd: 0, meta, gap: '\n' };
+      const rec: Block = { id: newBlockId(), kind: 'record', text: next, lineStart: 0, lineEnd: 0, meta, gap: '\n' };
       store.dispatch({ type: 'patchCur', cur: [...st.cur, rec] });
     },
     () => undefined,
