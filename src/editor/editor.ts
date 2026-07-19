@@ -296,7 +296,8 @@ function buildDecorations(doc: PMNode, rev: RevState): DecorationSet {
               pos + node.nodeSize - 1,
               () => {
                 const s = document.createElement('span');
-                s.className = op.state === 'withdrawing' ? 'rev-pin rev-warn' : 'rev-pin';
+                const kind = op.type === 'note' ? (op.kind ?? 'request') : 'request';
+                s.className = 'rev-pin rev-kind-' + kind + (op.state === 'withdrawing' ? ' rev-warn' : '');
                 s.textContent = '✎';
                 s.dataset.note = op.note;
                 s.title = op.note;

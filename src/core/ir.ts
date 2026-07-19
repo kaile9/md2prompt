@@ -272,15 +272,35 @@ function inheritIds(fresh: Block[], old: Block[]): Block[] {
     return old[i].id;
   });
   let oi = 0;
-  fresh.forEach((f, fi) => {
-    if (idOf[fi]) return;
+  return fresh.map((f, fi) => {
+    if (idOf[fi]) return { ...f, id: idOf[fi] };
     while (oi < old.length && used.has(oi)) oi++;
     if (oi < old.length && old[oi].kind === f.kind) {
-      idOf[fi] = old[oi].id;
+      const o = old[oi];
       used.add(oi);
+      if (f.text !== o.text && canonText(f.text) === canonText(o.text)) {
+        // 序列化器归一化噪音（hr 标记/表格对齐/列表子弹与松散/转义）：继承 id 并保留原文，幻影不入账（v2.0 根治）
+        return { ...f, id: o.id, text: o.text };
+      }
+      return { ...f, id: o.id };
     }
+    return { ...f, id: newBlockId() };
   });
-  return fresh.map((f, fi) => ({ ...f, id: idOf[fi] ?? newBlockId() }));
+}
+
+/** 归一化等价判定（只用于「这算不算同一块」，永不写回）：序列化器方言——转义反斜杠、
+ *  hr 标记（--- / *** / ___）、列表子弹（- / * / +）与松散化空行、表格列宽补齐与分隔行、行尾空格。 */
+const CANON_ESCAPABLE = '_*`#+-.!()[]{}<>|';
+function canonText(t: string): string {
+  return t
+    .replace(/\\(.)/gs, (m: string, c: string) => (CANON_ESCAPABLE.includes(c) ? c : m))
+    .replace(/^ {0,3}([-*_])(?: *\1){2,} *$/gm, '---')
+    .replace(/^(\s*)[-*+](?=\s)/gm, '$1-')
+    .replace(/^[\s|:+-]+$/gm, (m: string) => m.replace(/ /g, '').replace(/-+/g, '---'))
+    .replace(/ +\|/g, '|')
+    .replace(/\| +/g, '|')
+    .replace(/\n{2,}/g, '\n')
+    .replace(/ +$/gm, '');
 }
 
 /** 增量重解析：新旧节文本从头/尾按块对齐（startsWith + 块边界校验），只对变更中段跑 remark。

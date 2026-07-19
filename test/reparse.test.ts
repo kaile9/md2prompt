@@ -53,3 +53,39 @@ describe('reparseSection（增量重解析）', () => {
     expect(step2[2].id).toBe(before[2].id);
   });
 });
+
+describe('canonText 归一化等价（v2.0 幻影修订根治）', () => {
+  const quirky = ['首段 math_block 文本。', '', '---', '', '| A | B |', '|---|---|', '| 1 | 2 |', '', '- 项一', '- 项二', '', '尾段。', ''].join('\n');
+  const normalized = [
+    '首段 math\\_block 文本。',
+    '',
+    '***',
+    '',
+    '| A   | B   |',
+    '| --- | --- |',
+    '| 1   | 2   |',
+    '',
+    '* 项一',
+    '',
+    '* 项二',
+    '',
+    '尾段。',
+    '',
+  ].join('\n');
+
+  test('序列化器方言（hr 标记/表格对齐/列表子弹与松散/转义）被吸收：保留原文与 id', () => {
+    const before = parseDoc(quirky, 'md');
+    const got = reparseSection(normalized, before);
+    expect(serializeBlocks(got)).toBe(quirky); // 幻影不入账
+    expect(got.map((b) => b.id)).toEqual(before.map((b) => b.id));
+  });
+
+  test('真实编辑超出演算范围：新文本保留，幻影照样吸收', () => {
+    const before = parseDoc(quirky, 'md');
+    const edited = normalized.replace('尾段。', '尾段改。');
+    const got = reparseSection(edited, before);
+    expect(serializeBlocks(got)).toBe(quirky.replace('尾段。', '尾段改。'));
+    expect(got[got.length - 1].text).toBe('尾段改。\n');
+    expect(got[1].text).toBe('---'); // hr 幻影仍被吸收
+  });
+});

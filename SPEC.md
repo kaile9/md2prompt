@@ -71,7 +71,9 @@
 > 7. **XML 源码承载（审查 B1）**：.xml 恒由 CodeMirror 承载（单 code 块，diff 为整块 replace、可 patch 形），不再经 md 重解析碎块（e2e/xmlmode.mjs 门禁）。
 > 8. **性能专项**：`reparseSection` 归位 core/ir 并改增量——新旧节文本头/尾按块对齐（startsWith+后继换行边界校验），只对变更中段跑 remark（300KB 节单块编辑 flush 341.5ms→2.3ms，≈148×）；id 继承 Map 化；dp 矩阵总量护栏 m·n≤250 万；panels 渲染签名跳过。已知边界：软换行续接在块尾时增量对齐可能多记一条 insert（文本无损，可隐藏）。
 > 9. **杂项**：suppressPrompt 会话标志（「忽略」后全程不再覆写日记，审查 B2）；Ctrl+A 护栏扩 math_block（A-2）；日记失败经 onPromptError 上 toast（A-3）；main 图片缓存撤并 fsio（A-5）；choice closer 成对释放（A-6）；onSaveState 退订（A-8）；safeUrl 表驱动 XSS 回归（C-4）；CSP meta（D-6）；27 文件 MPL SPDX 头（A-9）。
-> 10. **用户裁决备忘**：反向 diff 想法否决（入「不做」）；多标签页与 A/B/C 版本对比记为 v2 候选；i18n 不进本轮（维持中文红线）；导出默认路径是「复制 Prompt」，Agent 远程协作、持有原文。
+> 10. **用户裁决备忘**：反向 diff 想法否决（入「不做」）；多标签页与 A/B/C 版本对比记为 v2 候选；导出默认路径是「复制 Prompt」，Agent 远程协作、持有原文。
+> 11. **v1.6 追加**（合并前增补）：GitHub Actions CI（check+e2e 每 push、v* tag 自动 Release）；微排版 + OpenType 设置组（标点悬挂/中西文间隙/标点压缩/优化折行/表格数字/旧式数字，@supports 门控，e2e/microtypo.mjs 门禁）；说明书中英双语（README.en 补 Manual 节）；Discussions 已开通（反馈入口）。
+> 12. **v2.0.1**：① 首笔编辑幻影修订根治——序列化器方言（hr 标记/表格对齐/列表子弹与松散/转义）在首次 flush 被整篇入账；`canonText` 归一化等价判定：仅怪癖不同的块继承 id 并保留原文（e2e/faithful.mjs 门禁）。被真实编辑的块仍按序列化器规范形入账（同表格归一化旧例，一条 replace）。② 批注三型着色（浮层/批注钉/徽标，令/议/论）。③ look.mjs 选段步骤字体度量无关化（CI 环境回归）。
 
 ## 0. 产品一句话
 

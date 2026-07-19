@@ -97,7 +97,7 @@ export function openFloater(opts: FloaterOptions): void {
     for (const [k, label] of kinds) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'mini-btn';
+      b.className = 'mini-btn kind-' + k;
       b.textContent = label;
       b.title = S.noteKindTips[k];
       b.classList.toggle('on', k === curKind);

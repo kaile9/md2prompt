@@ -51,6 +51,8 @@ MD2Prompt 的答案是：**协议比编辑器重要**。编辑器只是薄层，
 
 ## 说明书
 
+> English manual: see [README.en.md · Manual](README.en.md#manual)（说明书已中英双语）。
+
 ### 打开与保存
 
 - 「打开」走浏览器 File System Access API（Chrome/Edge）；Firefox 降级为上传/下载。文件句柄存在你自己的 IndexedDB，重启后点一下页面即可恢复上次文档。
@@ -112,6 +114,13 @@ changes: 3
 
 ## 更新日志
 
+### 2.0.1
+
+- **首笔编辑幻影修订根治**：Milkdown 序列化器方言（`---`→`***`、表格列宽补齐、列表 `-`→`*` 且松散化、`math_block`→`math\_block` 转义）在首次 flush 时被整篇入账（随机影响十几行、Ctrl+Z 无法撤回）。新增归一化等价判定（canonText）：只在序列化器怪癖上不同的块继承 id 并保留原文，幻影不入账（e2e/faithful.mjs 门禁 + 单测）。
+- **批注三型着色**：命令/建议/讨论在批注浮层、文档批注钉、修订栏徽标上区分颜色（令/议/论 三色徽标字）。
+- **CI 上线**：GitHub Actions 每 push 跑 check+11 套 E2E 门禁；v* tag 自动构建挂载 Release。
+- 门禁加固：look.mjs 选段步骤字体度量无关化。
+
 ### 2.0.0（vs 1.5.2）
 
 **协议破坏性变更（不兼容 1.x 日记）**
@@ -129,7 +138,10 @@ changes: 3
 
 **工程**
 
-- 单测 154 → 211 例（13 文件）；E2E 门禁 6 → 10 套（新增页宽/分屏对齐/源码批注/XML 四套）；27 个源文件 MPL-2.0 SPDX 头；index.html 加 CSP；safeUrl 表驱动 XSS 回归入库。
+- 单测 154 → 211 例（13 文件）；E2E 门禁 6 → 11 套（新增页宽/分屏对齐/源码批注/XML/微排版五套）；27 个源文件 MPL-2.0 SPDX 头；index.html 加 CSP；safeUrl 表驱动 XSS 回归入库。
+- GitHub Actions：`check`（tsc+单测+构建）+ `e2e`（11 套门禁）每 push 跑；打 `v*` tag 自动构建并挂载 Release 产物。
+- 微排版 + OpenType 设置组：标点悬挂 / 中西文间隙 / 标点压缩 / 优化折行 / 表格数字 / 旧式数字——@supports 门控，不支持的浏览器静默忽略。
+- 说明书中英双语（中文 README.md · English README.en.md）。
 
 ### 1.5.2
 

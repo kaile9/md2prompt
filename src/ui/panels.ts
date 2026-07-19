@@ -48,6 +48,9 @@ const OP_ICON: Record<Op['type'], string> = {
   note: S.opNote,
 };
 
+/** note 三型徽标字（令/议/论，v2.0 三型着色）。 */
+const NOTE_ICON: Record<string, string> = { request: '令', suggest: '议', discuss: '论' };
+
 /** 行锚一律取活值：cur 优先、base 兜底。 */
 function opLine(state: DocState, op: Op): number | null {
   const b = state.cur.find(x => x.id === op.blockId) ?? state.base.find(x => x.id === op.blockId);
@@ -119,7 +122,7 @@ function revRowHtml(state: DocState, op: Op): string {
       ? `<button class="mini-btn" data-act="edit-note" data-id="${esc(op.id)}">${S.editNote}</button>`
       : '';
   return `<div class="rev-row${armed}" data-id="${esc(op.id)}">
-    <div class="rev-top"><span class="rev-badge rb-${op.type}">${OP_ICON[op.type]}</span><span class="rev-anchor" data-bid="${esc(op.blockId)}"${line != null ? ` data-line="${line}"` : ''}>${esc(cut(opAnchor(op), 30))}</span></div>
+    <div class="rev-top"><span class="rev-badge rb-${op.type}${op.type === 'note' ? ` rb-kind-${op.kind ?? 'request'}` : ''}">${op.type === 'note' ? NOTE_ICON[op.kind ?? 'request'] : OP_ICON[op.type]}</span><span class="rev-anchor" data-bid="${esc(op.blockId)}"${line != null ? ` data-line="${line}"` : ''}>${esc(cut(opAnchor(op), 30))}</span></div>
     ${quoteLine}
     ${noteLine}
     <div class="rev-bottom"><span class="rev-meta">${esc(meta)}</span><span class="rev-actions">${cardActs(op)}${editBtn}<button class="mini-btn" data-act="jump" data-id="${esc(op.id)}">${S.jump}</button></span></div>

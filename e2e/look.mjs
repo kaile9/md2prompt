@@ -182,10 +182,11 @@ ok('10b. 跳转精确居中（中段块 → 滚动比例≈0.5）', j.bid !== ''
 
 // 11) Alt+M 带选区 quote（评审 M2）
 await p.evaluate(() => document.getElementById('scroller').scrollTo({ top: 0 }));
-await p.click('#doc .ProseMirror p', { position: { x: 40, y: 10 } });
+await p.click('#doc .ProseMirror p', { position: { x: 60, y: 14 } });
+await p.keyboard.press('Home'); // 字体度量差异下先归行首，再扩选（CI 曾因此漏选）
 for (let i = 0; i < 5; i++) await p.keyboard.press('Shift+ArrowRight');
 await p.keyboard.press('Alt+m');
-await p.waitForTimeout(500);
+await p.waitForTimeout(600);
 const pv = await p.evaluate(() => document.querySelector('#floater .floater-preview')?.textContent ?? '');
 ok('11. Alt+M 批注浮层含选段预览', pv.length > 0, pv.slice(0, 12));
 await p.keyboard.press('Escape');
