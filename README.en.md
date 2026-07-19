@@ -1,6 +1,6 @@
 # 2youg1's MD2Prompt
 
-[中文](README.md) · [Download](../../releases) · [Design spec (中文)](SPEC.md) · [Feedback](https://github.com/kaile9)
+[中文](README.md) · [Download](../../releases) · [Design spec (中文)](SPEC.md) · [Feedback (Discussions)](../../discussions) · [Pull requests](../../pulls)
 
 > Built entirely with [Kimi K3](https://www.moonshot.cn) — no other models were used at any point.
 
@@ -18,64 +18,90 @@ Three chronic pains of remote AI co-writing:
 2. **Common renderers swallow prompt-style XML tags** — `<identity>`-style structural hints for agents vanish silently, and editing diagram source in Notepad is an escaping disaster;
 3. **Every round means re-uploading the whole file** — three sentences changed, three hundred KB transferred.
 
-MD2Prompt's answer: **the protocol matters more than the editor.** The editor is a thin layer; the real product is a protocol-precise `Prompt.md` diary — your edits and annotations, saved in real time, in a format an AI can consume exactly.
+MD2Prompt's answer: **the protocol matters more than the editor.** The editor is a thin layer; the real product is a protocol-precise `Prompt.md` diary — your edits and annotations, saved in real time, in a format an AI can consume exactly. The original text is already in the AI's context (it wrote it); the diary ships only the delta.
 
 ## 30-second quickstart
 
 1. Grab `2youg1-md2prompt.html` from [Releases](../../releases) (one 6 MB file with all dependencies inlined; no backend, API, or telemetry; local-file editing works offline, while remote images and external links still use the network under normal browser rules);
 2. Double-click (Chrome/Edge recommended), click 「打开」 and pick your `.md` / `.jsonl` / `.xml`;
 3. Just edit. Cards appear instantly in the right 「修订」 panel;
-4. Click 「复制 Prompt」 and paste to your AI. It receives: file name, BLAKE3 hash, every edit (before + after + line + time), every annotation;
+4. Click 「复制 Prompt」 and paste to your AI. It receives: file name, BLAKE3 hash, every edit (original + alter + line), every note (request / suggest / discuss);
 5. When the AI returns a new version, save it and 「打开」 again — if the hash pairs, **all your previous tracked changes restore automatically**. Keep iterating.
 
 > Foolproof by design: the original stays clean and every action is auto-saved. Even if you close the tab outright, `name.prompt.md` in the same folder still gives you a paste-ready prompt.
 
 ## Feature tour
 
-- **Edit-and-track**: replace / insert / delete / move / annotate — recorded at sentence granularity (old struck through, new highlighted), like Word track-changes without an "accept" step.
-- **Annotations (B-class requests)**: select text → floating ✎ card (or `Alt+M`); dashed underline + pin; sidebar card shows the quote (truncated, click to expand), editable, withdrawable — the AI gets exactly "source text + your note".
-- **Hide / Withdraw (two-stage)**: "Hide" collapses confirmed edits; "Withdraw" previews strikethrough first (cancellable), confirm to actually revert; withdrawn edits become C-class tombstones (capped at 50), revivable anytime.
-- **Render / Source / Split modes**: WYSIWYG; a CodeMirror source editor (syntax highlighting, line numbers, find & replace); or split view with synchronized scrolling.
+- **Edit-and-track**: replace / insert / delete / swap / annotate — recorded at sentence granularity (old struck through, new highlighted), like Word track-changes without an "accept" step.
+- **Three kinds of notes**: select text → floating ✎ card (or `Alt+M`) — **request** (do exactly this) / **suggest** (AI decides) / **discuss** (talk only, no edits), switchable in the floater; dashed underline + pin; sidebar card shows the quote, editable, withdrawable.
+- **Block swap**: `Alt+↑/↓` swaps with the neighbor (auto-recorded); the ⇄ rail button swaps with any line's block — swap is self-inverse, so withdraw/restore is just swapping again.
+- **Hide / Withdraw (two-stage)**: "Hide" collapses confirmed edits; "Withdraw" previews strikethrough first (cancellable), confirm to actually revert; withdrawn edits become tombstones (capped at 50), revivable anytime.
+- **Render / Source / Split modes**: WYSIWYG; a CodeMirror source editor (syntax highlighting, line numbers, find & replace); or split view with **block-anchored row alignment** (matching block tops, not crude ratio sync). Notes and inline formatting (B/I/S/code/link) work in **all three modes**.
 - **Edit XML cards in place**: prompt-style tag blocks render as cards whose source you edit directly — tracked per keystroke, no modal whole-block replacement.
 - **Faithful rendering**: Mermaid, KaTeX, tables, images (relative paths via directory permission), footnote popovers.
 - **JSONL dataset mode**: virtualized record-card stream (smooth at 10k+ lines), form/raw-JSON dual-tab editor — an AI training-data cleaning bench.
-- **Large-document friendly**: auto-splits above 300 KB / 2000 lines; the editor only carries one section (a 950 KB doc opens in ~0.5 s).
-- **3 themes × 2 styles**: pure-black / marble / warm-paper × geek / humanist; font size & weight, line height, page width, alignment, brightness/contrast, CJK & Latin font stacks, first-line indent, line-number gutter, guide lines — a genuine Word replacement for long-form writing.
-- **Editing tools**: vertical tool rail + selection float card + customizable shortcuts.
+- **XML files in source mode**: a whole `.xml` is one code block edited in CodeMirror — clean revision semantics (one block replace, auto-patched for large files).
+- **Large-document friendly**: auto-splits above 300 KB / 2000 lines; incremental reparse makes keystroke commit O(change) instead of O(section) (341 ms → 2.3 ms on a 300 KB section).
+- **3 themes × 2 styles**: pure-black / marble / warm-paper × geek / humanist; font size & weight, line height, page width (any value works), alignment, brightness/contrast, CJK & Latin font stacks, first-line indent, line-number gutter, guide lines — a genuine Word replacement for long-form writing.
+- **Editing tools**: vertical tool rail (headings/quote/lists/code/rule/link/image/swap) + selection float card + customizable shortcuts.
 - **Exports**: copy Prompt (tombstones omitted) / download Prompt.md / download clean copy / export PDF (header: source-file completion time, footer: export time).
 
 ![Night theme](docs/assets/night.png)
 ![Split view](docs/assets/split.png)
 
-## The protocol at a glance
+## The protocol at a glance (2.0)
 
 ```xml
 ---
-protocol: md2prompt/1.2.0
+protocol: md2prompt/2.0.0
 doc: constitution-zh.md
 doc-hash: blake3:9f2c…
-本次：B 类请求 1 条，A 类直接修改 2 条，C 类墓碑 0 条（无需执行）。
+base-hash: blake3:71be…
+changes: 3
 ---
-<requests>
-<request id="B1" type="note" line="56" time="14:22">
-Split this sentence in two and add an example.
-<quote>The constitution guides Claude's values and behavior…</quote>
-</request>
-</requests>
----
-<edits>
-<edit id="A1" type="replace" line="102" time="14:25">
-<before>…original…</before>
-<after>…revised…</after>
-</edit>
-</edits>
+
+# 修改记录 · constitution-zh.md
+<!-- This is the human's edit diary (you hold the original; line numbers are current-doc):
+     revise/swap = already done by the human (context only); note = for you to act on
+     (request = do it, suggest = your call, discuss = talk only). -->
+
+<changes>
+<note n="1" line="56" request="Split this sentence in two and add an example."><range>The constitution guides Claude's values and behavior…</range></note>
+<revise n="2" line="102"><original>…original…</original><alter>…revised…</alter></revise>
+<swap n="3" a="40" b="52"><first>first line of block A</first><first>first line of block B</first></swap>
+</changes>
 ```
 
-- Semver protocol — same major version is backward compatible;
-- op ids are stable across exports (cache-friendly for the AI side); large edits ship as `<del>/<ins>` patches (token-lean);
-- C-class tombstones stay in the diary and are omitted when copying.
+- One `<changes>` stream ordered by `n` (modification order), stable across exports (cache-friendly);
+- notes fold into a single attribute line; a `revise` without `original` is an insertion, without `alter` a deletion; large edits ship as `<del>/<ins>` patches (token-lean);
+- tombstones stay in the diary file and are omitted when copying.
 
-Full protocol in [SPEC.md](SPEC.md) (Chinese; the single source of truth, with the full revision history).
+Full protocol in [SPEC.md](SPEC.md) §3 (Chinese; the single source of truth, with the full revision history).
+
+## Changelog
+
+### 2.0.0 (vs 1.5.2)
+
+**Breaking protocol change (1.x diaries not compatible)**
+
+- Protocol 2.0: single `<changes>` stream ordered by `n`; `<request>/<edit>` retired in favor of `note` (request/suggest/discuss) and `revise` (original+alter); `time` attribute removed; copy version omits tombstones and their count; self-explanatory structure (Opus/K3-class models read it directly).
+- `move` retired; `swap` takes over — new "swap line X with line Y" command (Alt+↑/↓ adjacent, ⇄ for any line).
+
+**Fixes**
+
+- Wrong-line revision decorations & selection anchors in long docs (tag-region merge at the IR level); sentences no longer split at `SKILL.md`-style tokens; page width >60 display failure; split-view row alignment (block-anchored sync); notes & inline formatting now work in source/split modes; XML revision semantics (single-block diff in source mode); "Ignore" no longer lets later edits overwrite the diary; math_block Ctrl+A escape; diary-write failures now surfaced.
+
+**Performance**
+
+- Incremental reparse ≈148× on large sections (341 ms → 2.3 ms at 300 KB); global cap on the diff DP matrix; 10k-row outlines no longer rebuilt per keystroke.
+
+**Engineering**
+
+- Unit tests 154 → 211 (13 files); E2E gates 6 → 10 (new: measure / split-align / source-annotate / xml-mode); MPL-2.0 SPDX headers on all 27 source files; CSP meta in index.html; table-driven safeUrl XSS regression suite.
+
+### 1.5.2
+
+- Initial open-source release (v1.5.1) + PR #2 file-write integrity fixes (cross-target/cross-channel write serialization).
 
 ## Build & develop
 
@@ -84,10 +110,10 @@ bun install
 bun run dev      # dev server
 bun run build    # produces a single dist/2youg1-md2prompt.html
 bun run check    # tsc --noEmit
-bun test         # 154 unit tests across 11 files
+bun test         # 211 unit tests across 13 files
 ```
 
-E2E (Playwright, requires Node): `life.mjs`, `v13.mjs`, `note.mjs`, `srcmode.mjs`, `export.mjs`, and `look.mjs` report failures with a non-zero exit code. The `qa15-*`, `perf*`, and screenshot scripts are manual probes, not automated gates.
+E2E (Playwright, requires Node): `life.mjs`, `v13.mjs`, `note.mjs`, `srcmode.mjs`, `export.mjs`, `look.mjs`, `measure.mjs`, `splitalign.mjs`, `sourceanno.mjs`, and `xmlmode.mjs` report failures with a non-zero exit code. The `qa15-*`, `perf*`, and screenshot scripts are manual probes, not automated gates.
 
 ## FAQ
 
@@ -95,8 +121,10 @@ E2E (Playwright, requires Node): `life.mjs`, `v13.mjs`, `note.mjs`, `srcmode.mjs
 
 **Does the AI need tool access to cooperate?** No — that's the point. Everything in Prompt.md is self-explanatory text; the AI reads it, knows exactly what to change and how, and returns the new full text. Zero function calls.
 
-**Where does my data go?** The app does not upload documents to a server and has no server API or telemetry. File I/O goes through the browser's File System Access API; handles live in your own IndexedDB. Remote images in a document are fetched by the browser from their URLs, and following an external link visits that site.
+**Where does my data go?** The app does not upload documents to a server and has no server API or telemetry (the CSP's `connect-src 'none'` backs this up). File I/O goes through the browser's File System Access API; handles live in your own IndexedDB. Remote images in a document are fetched by the browser from their URLs, and following an external link visits that site.
+
+**Is the 2.0 diary compatible with 1.x?** No (breaking change; local single-file workflow carries no legacy). Finish your 1.x sessions in 1.5.2 before upgrading.
 
 ## License
 
-MPL-2.0 (see [LICENSE](LICENSE)). Author: [2youg1](https://github.com/kaile9).
+MPL-2.0 (see [LICENSE](LICENSE); SPDX headers in every source file). Author: [2youg1](https://github.com/kaile9/md2prompt).

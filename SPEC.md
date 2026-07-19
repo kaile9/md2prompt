@@ -1,7 +1,7 @@
-# 2youg1的MD2Prompt · 设计冻结稿（SPEC v1.5）
+# 2youg1的MD2Prompt · 设计冻结稿（SPEC v1.6）
 
 > 本文件是唯一权威设计基准。任何模块实现与本文冲突时，改模块，不改本文（除非用户明示）。
-> 产品名：**2youg1的MD2Prompt**（UI 显示名；仓库/路径用 `md2prompt`）。作者 ID：2youg1，反馈入口 https://github.com/kaile9 。许可证：MPL-2.0。
+> 产品名：**2youg1的MD2Prompt**（UI 显示名；仓库/路径用 `md2prompt`）。作者 ID：2youg1。许可证：MPL-2.0（源文件均带 SPDX 头）。
 
 > **v1.1 修订记录**（八路代码审查后，用户批准三项裁决）：
 > 1. `Op` 各变体加可选 `line?: number`（内存态锚点，协议文件格式不变）：parse 保留行号、恢复按「行号邻近+文本匹配」重绑定、reject/恢复精确落位。
@@ -61,6 +61,18 @@
 > 3. **XML 卡直编护栏**：Ctrl+A 在 code_block 内只全选本块文本（默认 selectAll 会让重打内容逃逸成普通段落并被序列化转义 `\<`，QA F1/F2）；档一配对跨围栏（XML 内容里的 ``` 是内容不是文档围栏，fenceScan 曾把块劈碎，QA F3）；`xmlCardView.update` 收窄 `-xml` 档；空卡徽标兜底 `xml`。
 > 4. **杂项**：快捷键捕获层 `return`→`continue`（源码/分屏下切模式键复活，v1.4.1 遗留）；minimap 改 flex basis 0 高度全 ∝ 文本量（万块不裁尾）；flashEl 重触发重启动画；换文档清旧行列；`joinPath` 分隔符跟随前缀风格；`#floater/#popover` z-70（另见 v1.5-7）。
 
+> **v1.6 记录**（用户裁决的协议重构 + 八路缺陷修复 + 性能专项，全部落地）：
+> 1. **协议 2.0.0（BREAKING）**：单流 `<changes>` 按 `n`（修改顺序）排列；不再分 A/B 类——note（`request` 修改命令 / `suggest` 修改建议 / `discuss` 希望讨论，三型互斥，批注浮层可切）与 revise（`original`+`alter`，缺 original=整段新增、缺 alter=整段删除）；`<swap a b>` 调换（自逆，Alt+↑/↓ 记相邻 swap，工具轨 ⇄ 任意行调换）；`time` 属性删除（`n` 即顺序）；`<format>` 条件排版命令（一句自然语言，可多条）；复制版省略 `<withdrawn>` 区段与计数行、零墓碑不发行；note 收进属性单行、子元素全单行时整元素压行；**只认 md2prompt/2.x，旧 1.x 日记不再兼容**（用户裁决：本地极小文件无历史包袱）。前提备案：原文是 Agent 写的、在其上下文/工作区中，行号基于当前文档。
+> 2. **IR 层标签区域合并（BUG5/框选错锚根治）**：`mergeTagRegions` 把开标签跨空行配对到同名闭标签的连续区块并为单块（序列化不变量保持）——IR 块 ≡ 编辑器 XML 卡围栏 1:1，装饰/光标/批注/跳转的节点序映射结构性正确。档一正则自 htmlguard 移至 ir 共享。replaceDecos 对 code_block/math_block 改恒等投影（卡内句级 diff 不被 project 误吞）。
+> 3. **句切分句首启发式（BUG1b）**：ASCII 软切需「后随空白 + 再下一个非空白字符像句首」（大写/数字/开引号括号）——`SKILL.md`、v1.5.2、e.g. 不再腰斩句子。
+> 4. **页宽修复（BUG2）**：`#doc` 加 `width:100%`——auto margin 会把 grid stretch 弱化成 fit-content，页宽>内容宽时设置失效（Playwright 实测定位；e2e/measure.mjs 门禁）。
+> 5. **分屏块锚行对齐（BUG3）**：比例同步退役；左 CM 行 ↔ 右 `.blk[data-line]` 对应块顶对齐 + 块内比例插值（e2e/splitalign.mjs 门禁）。
+> 6. **源码/分屏批注与行内格式（BUG4 Tier-1）**：CM 选区上报驱动同一选区浮卡（B/I/S/行内码/链接/批注）；Alt+M 三模式可用（CM 选区起点行锚块）；批注三型浮层选择器。
+> 7. **XML 源码承载（审查 B1）**：.xml 恒由 CodeMirror 承载（单 code 块，diff 为整块 replace、可 patch 形），不再经 md 重解析碎块（e2e/xmlmode.mjs 门禁）。
+> 8. **性能专项**：`reparseSection` 归位 core/ir 并改增量——新旧节文本头/尾按块对齐（startsWith+后继换行边界校验），只对变更中段跑 remark（300KB 节单块编辑 flush 341.5ms→2.3ms，≈148×）；id 继承 Map 化；dp 矩阵总量护栏 m·n≤250 万；panels 渲染签名跳过。已知边界：软换行续接在块尾时增量对齐可能多记一条 insert（文本无损，可隐藏）。
+> 9. **杂项**：suppressPrompt 会话标志（「忽略」后全程不再覆写日记，审查 B2）；Ctrl+A 护栏扩 math_block（A-2）；日记失败经 onPromptError 上 toast（A-3）；main 图片缓存撤并 fsio（A-5）；choice closer 成对释放（A-6）；onSaveState 退订（A-8）；safeUrl 表驱动 XSS 回归（C-4）；CSP meta（D-6）；27 文件 MPL SPDX 头（A-9）。
+> 10. **用户裁决备忘**：反向 diff 想法否决（入「不做」）；多标签页与 A/B/C 版本对比记为 v2 候选；i18n 不进本轮（维持中文红线）；导出默认路径是「复制 Prompt」，Agent 远程协作、持有原文。
+
 ## 0. 产品一句话
 
 本地、单文件 HTML、免安装、秒开的 Markdown/JSONL 修改器：所见即所得编辑即留痕（Word 修订心智），把人的修改与批注实时落盘为一份**协议精确的 Prompt.md**，复制即可回传任何 Agent，无需重传原文、无需 Agent 调工具。
@@ -78,7 +90,7 @@
   - 哈希：`@noble/hashes`（BLAKE3 为主，SHA-3 备用）
   - 图与公式：`mermaid`、`katex`（均打包进单文件；初始化惰性——首次用到才 `initialize`，避免白屏成本）
 - `vite-plugin-singlefile` 关闭代码分片并内联动态依赖；`assetsInlineLimit` 拉满（KaTeX 字体 base64 内联）。
-- TS strict。目标：应用代码总量 < 4000 行；单文件 TS 模块 < 400 行，CSS < 420 行（紧凑格式）；注释只写非显然不变量；UI 文案全部中文、集中在 `ui/strings.ts`。超线备案：main.ts（约 915，装配集中）、styles.css（约 550，三主题变量密集）——v1.5.1 评审确认暂不拆，新增功能优先向对应小模块归位。
+- TS strict。目标：应用代码总量 < 4000 行；单文件 TS 模块 < 400 行，CSS < 420 行（紧凑格式）；注释只写非显然不变量；UI 文案全部中文、集中在 `ui/strings.ts`。超线备案：main.ts（约 1060，装配集中）、styles.css（约 555，三主题变量密集）、editor.ts（约 600，PM 装配+装饰）、promptmd.ts（约 455，协议双方同文件对偶）、state.ts（约 415）、changes.ts（约 415）——v1.6 评审确认暂不拆（装饰/协议/账簿各自是单一概念域），新增功能优先向对应小模块归位；reparseSection 已自 main 归位 core/ir。
 - 工程质量红线（用户原话转述）：鲁棒、简洁、概念清晰、易扩展，K3 级模型可轻松 debug/加功能。**禁止**投机性抽象、死代码、重复实现。
 
 ## 2. 核心架构：Block IR 一个原语
@@ -90,8 +102,8 @@
 界面（大纲/行号槽/修订面板/静态渲染）◀── Block[] + Op[] ◀───────┘
 ```
 
-- **Block** 是唯一文档单位。Markdown 块（heading/para/code/table/html/list/quote/hr/math）；JSONL 每条记录一行 = 一个 `record` 块；.xml 文件整体 = 一个 code 块。
-- **变更引擎不认编辑器事件，只 diff Block 数组**：粘贴、撤销、批量替换全部天然正确。移动（move）无法从 diff 推断，由**显式命令**（Alt+↑/↓、拖拽为 v2）记录；commit 时校验，失效 move（如被撤销）自动销账。
+- **Block** 是唯一文档单位。Markdown 块（heading/para/code/table/html/list/quote/hr/math）+ **提示词标签区域**（档一开标签跨空行配对到同名闭标签的连续区块，`mergeTagRegions` 并为单个 html 块——IR 块 ≡ 编辑器 XML 卡围栏 1:1，v1.6）；JSONL 每条记录一行 = 一个 `record` 块；.xml 文件整体 = 一个 code 块（源码模式承载，v1.6）。
+- **变更引擎不认编辑器事件，只 diff Block 数组**：粘贴、撤销、批量替换全部天然正确。调换（swap）无法从 diff 推断，由**显式命令**（Alt+↑/↓ 相邻、工具轨 ⇄ 任意行）记录；commit 时校验（swapAlive：块序还原即自动销账）。
 - 按键成本 = O(活动节)：commit 只重算 ops 与行号；序列化+哈希+Prompt 渲染在 800ms 防抖落盘通道内异步完成，不进按键同步路径。
 
 ```ts
@@ -106,13 +118,15 @@ interface Block {
 }
 
 type OpState = 'hidden' | 'withdrawing' | 'withdrawn'; // 缺省 = pending
-interface OpBase { id: string; blockId: string; time: string; note?: string; line?: number; state?: OpState }
+type NoteKind = 'request' | 'suggest' | 'discuss'; // note 三型（协议 2.0）；缺省 request
+interface OpBase { id: string; blockId: string; time: string; note?: string; line?: number; state?: OpState; seq?: number }
 type Op =
   | OpBase & { type: 'replace'; before: string; after: string }
   | OpBase & { type: 'insert';  after: string }
   | OpBase & { type: 'delete';  before: string }
-  | OpBase & { type: 'move';    first: string; from: [number, number]; to: number }
-  | OpBase & { type: 'note';    note: string };  // B 类：文本不动
+  // swap（替代 move）：a<b 记录时行号；blockId=居 a 侧块，otherId=居 b 侧块；firstA/firstB 校验；自逆
+  | OpBase & { type: 'swap';    a: number; b: number; firstA: string; firstB: string; otherId?: string }
+  | OpBase & { type: 'note';    note: string; quote?: string; kind?: NoteKind }; // 文本不动
 
 interface DocState {
   file: { name: string; kind: 'md'|'jsonl'|'xml' };
@@ -124,72 +138,58 @@ interface DocState {
 ```
 
 - `diffBlocks(base, cur)`：先按 id 对齐，未匹配块走 LCS（归一化相似度 > 0.6 判 replace，否则 delete+insert；长度积超护栏直接 delete+insert，防主线程冻结）。`time` 一律本地 `HH:MM`。diff op id 为 `a:{blockId}:{type}` 确定性串——生命周期标记（flags）依附其上，跨 commit 存活。
-- **生命周期**：pending →（hide/unhide）hidden；任意非预令态 →（withdraw）withdrawing：文档内预览「将消失文本删除线、将恢复文本绿虚框」，可 cancelWithdraw 回 pending；再击（withdrawCommit）真正回滚 cur（rejectOp 语义），op 转 withdrawn 墓碑；restore 复活 = `applyOps(cur,[op],1)` 重放（note/move 回人工集）。
-- 恢复/导入：读 Prompt.md → 校验 `doc-hash == hash(打开的文件)` → parse 得 ops（带 `line`；墓碑直通）→ 活跃 op `rebindOps` 按「行号邻近 + 文本匹配」重绑 blockId → 按 ops **逆序取反**重建 base（replace 放回 before、insert 移除、delete 按行号插回、move 移回），每步验证文本相等（`\r\n`/`\n` 归一化后比较）；任一步失败 → 提示用户「以当前文件为新基线」。
+- **生命周期**：pending →（hide/unhide）hidden；任意非预令态 →（withdraw）withdrawing：文档内预览「将消失文本删除线、将恢复文本绿虚框」，可 cancelWithdraw 回 pending；再击（withdrawCommit）真正回滚 cur（rejectOp 语义），op 转 withdrawn 墓碑；restore 复活 = `applyOps(cur,[op],1)` 重放（note/swap 回人工集）。
+- 恢复/导入：读 Prompt.md → 校验 `doc-hash == hash(打开的文件)` → parse 得 ops（带 `line`；墓碑直通）→ 活跃 op `rebindOps` 按「行号邻近 + 文本匹配」重绑 blockId → 按 ops **逆序取反**重建 base（replace 放回 before、insert 移除、delete 按行号插回、swap 自逆换回），每步验证文本相等（`\r\n`/`\n` 归一化后比较）；任一步失败 → 提示用户「以当前文件为新基线」。
 
-## 3. Prompt.md 协议（产品灵魂，冻结格式）
+## 3. Prompt.md 协议（产品灵魂，冻结格式 · 2.0.0）
 
 文件名：`<文档名去扩展>.prompt.md`，与文档同目录。**每次变更防抖 800ms 重写**，即使页面被关，本地打开即可复制为提示词。
+协作模型：远程协作，原文是 Agent 写的（在其上下文/工作区中）；导出默认路径是「复制 Prompt」，**Agent 看不到本地改过的文件**——因此 revise 必须自足（original/alter 全文或 patch），行号基于当前文档（= 原文应用 revise 后的状态）。
 
 ```markdown
 ---
-protocol: md2prompt/1.2.0
+protocol: md2prompt/2.0.0
 doc: report.md
 doc-hash: blake3:9f3ac2…      # 当前文档全文哈希 —— 导入配对唯一依据
 base-hash: blake3:71be04…     # 基线哈希
-pending: 3
-withdrawn: 1
+changes: 4
+withdrawn: 1                  # 复制版此行与 <withdrawn> 区段一并省略；零墓碑不发行
 ---
 
 # 修改记录 · report.md
-> 由 2youg1的MD2Prompt 生成。B 类 = 请求 Agent 修改；A 类 = 人已直接修改。行号基于当前文档。
-> 本次：B 类请求 1 条，A 类直接修改 2 条，C 类墓碑 1 条（无需执行）。
+<!-- 这是人对文档的修改日记（原文在你上下文中；行号基于当前文档）：revise/swap=人已改完（理解即可）；note=人请你处理（request=照做，suggest=定夺，discuss=讨论）。 -->
 
-<requests>
-<request id="B3" lines="12-15" time="13:05">
-<first>我们认为协议比编辑器重要</first>
-<last>……因此插件只是薄层。</last>
-<quote>协议比编辑器</quote>
-<note>这段逻辑跳跃，请补一个过渡论证</note>
-</request>
-</requests>
+<format>中文首行缩进两字符</format>
 
----
-
-<edits>
-<edit id="A1" type="replace" line="8" time="13:22">
-<before>把文件修改的内容完整导出</before>
-<after>把文件修改的内容连同位置与意图完整导出</after>
-<note>可选</note>
-</edit>
-<edit id="A2" type="replace" lines="21-23" time="13:40" form="patch">
-<del>被替换掉的旧句子。</del>
-<ins>换入的新句子。</ins>
-<after-hash>blake3:9f3ac2aa71be04bb</after-hash>
-</edit>
-</edits>
+<changes>
+<note n="1" lines="12-15" request="这段逻辑跳跃，请补一个过渡论证。"><range>协议比编辑器</range></note>
+<note n="2" line="33" discuss="这里我想和你聊聊。"></note>
+<revise n="3" line="8"><original>把文件修改的内容完整导出</original><alter>把文件修改的内容连同位置与意图完整导出</alter><note>可选</note></revise>
+<revise n="4" lines="21-23" form="patch">
+<del>被替换掉的旧句子。</del><ins>换入的新句子。</ins>
+<alter-hash>blake3:9f3ac2aa71be04bb</alter-hash>
+</revise>
+<swap n="5" a="40" b="52"><first>甲块首行</first><first>乙块首行</first></swap>
+</changes>
 
 ---
 
-> C 类 = 已撤回的修改（墓碑记录，无需执行；复制 Prompt 时自动省略）。
+<!-- 墓碑：已撤回的修改，仅存档（复制 Prompt 时本区段自动省略）。 -->
 
 <withdrawn>
-<edit id="C1" type="replace" time="13:02">
-<before>撤回前的原文</before>
-<after>已撤掉的新文</after>
-</edit>
+<revise n="0"><original>撤回前的原文</original><alter>已撤掉的新文</alter></revise>
 </withdrawn>
 ```
 
 规则（render 与 parse 双方必须一致）：
 
-1. 顺序：B 类在前，`---` 分隔线，A 类在后；各自按文档位置从头到尾。C 类殿后（仅日记文件含墓碑；**复制 Prompt 版本省略**）。
-2. 锚点：单行目标给完整文本 + `line`；跨行目标给首行 `<first>` + 末行 `<last>` + `lines="a-b"`。replace 的 before/after 为块全文本：单行内联，多行放进自适应长度围栏（``` 数量 > 内容中最长反引号串），跨行 edit 以围栏全文为锚，不再重复 first/last。JSONL 记录的 before/after 一律 ```json 围栏。**patch 形**（1.2.0）：满足 §3 patch 条件的 replace 改发 `<del>/<ins>` 有序句对 + `<after-hash>`（`blake3:` + 16 hex 截断）；恢复时以 cur 块为 after 态验哈希，再反向应用 patch 得 before。行内批注的选段原文入 `<quote>`（1.2.0）。
-3. `time` 为本地 `HH:MM`。解析端对 ISO 格式 time 宽容并归一化（防御外部生产者）。
-4. 协议解析器只认 front matter + `<requests>/<edits>/<withdrawn>` 结构；正文其余文字（标题、引言）忽略，容忍人手工加注。
-5. 哈希函数默认 BLAKE3（`blake3:` 前缀），解析器也接受 `sha3-256:`。大字符串分块异步计算（1MB 片），不阻塞 UI。
-6. **版本策略（semver）**：`md2prompt/M.m.p`；major 相同即向下兼容（含旧裸 `md2prompt/1`），major 不符拒绝。minor = 字段增删（解析端容忍未知行、缺省补齐）；patch = 文案级。墓碑元素与活跃元素同构（`state` 由区段隐含，不写属性）；hidden 活跃 op 写 `state="hidden"`；withdrawing 按 pending 导出（预令不落盘）。
-7. **缓存与注意力（1.2.0）**：op 导出 id = 类字母 + 诞生序号，跨导出不变（会话内 seq 持久，恢复按文件最大编号续）——前缀逐字节稳定，Agent 端缓存命中最大化；头部摘要行给出 B/A/C 计数，Agent 首行即得全局地图。
+1. **单流**：`<changes>` 单流按 `n`（修改顺序，= 内存 seq）排列；`n` 跨导出稳定（会话内 seq 持久，恢复按文件最大编号续）——前缀逐字节稳定，Agent 端缓存命中最大化。墓碑同形元素进 `<withdrawn>`（仅日记文件；复制版整段省略）。
+2. **元素三型**：`note` = 人请求 Agent 处理——`request`（修改命令，请执行并返回改后文本）/ `suggest`（修改建议，Agent 定夺）/ `discuss`（希望讨论，勿改文本），三型互斥；单行时收进同名属性（`<note n="1" request="…">`），多行时走同名子元素；`range` = 行内选段原文（可缺省 = 块级/全文级，靠行号锚）。`revise` = 人已直接修改——`original`+`alter`；缺 `original` = 整段新增，缺 `alter` = 整段删除。`swap` = 两块已调换位置（`a`/`b` 行号 + 双 `<first>` 首行校验，自逆）。
+3. **锚点与内容形**：单行目标 `line`、跨行 `lines="a-b"`；行内内容 XML 转义（`& < >`，属性加 `"`）；多行进自适应长度围栏（``` 数量 > 内容中最长反引号串）；JSONL 记录的 original/alter 一律 ```json 围栏。**patch 形**：块 >200 字符、改动全为整句配对、patch 体量 ≤ 全文 60%、锚点全唯一时，replace 改发 `<del>/<ins>` 严格交替句对 + `<alter-hash>`（`blake3:` + 16 hex 截断）；恢复时以 cur 块为 alter 态验哈希，再反向应用 patch 得 original。子元素全单行时整元素压成一行。
+4. **排版命令**：`<format>` 一句自然语言（如「中文首行缩进两字符」），有内容才发行，可多条；解析端忽略（纯给 Agent）。
+5. 协议解析器只认 front matter + `<changes>/<withdrawn>` 结构；正文其余文字（标题、注释、format、手工加注）忽略；区段去重（重复 `<changes>/<withdrawn>` 拒绝）；`changes`/`withdrawn` 计数与实际元素数校验（防截断）。
+6. 哈希函数默认 BLAKE3（`blake3:` 前缀），解析器也接受 `sha3-256:`。大字符串分块异步计算（1MB 片），不阻塞 UI。
+7. **版本策略（semver）**：`md2prompt/M.m.p`；major 相同即向下兼容；major 不符拒绝（**2.x 起不兼容 1.x**——用户裁决：本地极小文件无历史包袱）。minor = 字段增删（解析端容忍未知行/未知属性、缺省补齐）；patch = 文案级。墓碑元素与活跃元素同构（`state` 由区段隐含，不写属性）；hidden 活跃 op 写 `state="hidden"`；withdrawing 按 pending 导出（预令不落盘）。
 
 ## 4. 编辑体验（两种文件形态，一个变更协议）
 
@@ -249,16 +249,17 @@ withdrawn: 1
 | 文件 | 责任 | 冻结的公开签名 |
 |---|---|---|
 | `core/ir.ts` | Block/Op 类型；md/JSONL → Block[]；Block[] → 全文文本；行号重算 | `parseDoc(text, kind): Block[]` `serializeBlocks(blocks): string` `blockLineMap(blocks): void`（原地写 lineStart/End） |
+| `core/ir.ts` | Block/Op 类型；md/JSONL → Block[]（含 `mergeTagRegions` 标签区域合并）；Block[] → 全文；行号重算；节增量重解析；档一标签正则共享 | `parseDoc(text, kind): Block[]` `serializeBlocks(blocks): string` `blockLineMap(blocks): void` `reparseSection(text, old): Block[]` `newBlockId(): string` `PROMPT_OPEN/PROMPT_CLOSE/DANGEROUS_TAG/BLOCK6_TAG` |
 | `core/changes.ts` | diff/撤回回滚/逆序恢复/重绑定 | `diffBlocks(base, cur): Op[]` `applyOps(base, ops, dir: 1\|-1): Block[]` `rejectOp(base, cur, op): Block[]` `rebindOps(blocks, ops): Op[]` `withTombstones(base, cur, ops): Block[]` |
-| `core/promptmd.ts` | 协议 render/parse（1.1.0+1.2.0 增量） | `renderPrompt(state, hashes, opts?): string` `parsePrompt(text): { meta, ops }` `planPatch(op): hunks\|null` `applyPatch(text, hunks): string` |
+| `core/promptmd.ts` | 协议 render/parse（2.0 单流 note/revise/swap） | `renderPrompt(state, hashes, opts?): string` `parsePrompt(text): { meta, ops }` `planPatch(op): hunks\|null` `applyPatch(text, hunks): string` |
 | `core/hash.ts` | BLAKE3/SHA-3 分块异步 + 同步短哈希 | `hashText(text, algo?): Promise<string>`（返回 `blake3:…` 带前缀） `hashShort(text): string`（patch 校验，16 hex 截断） |
-| `core/diffview.ts` | 句级行内 diff（显示用，v1.2） | `sentDiff(before, after): { type: 'same'\|'del'\|'ins'; text: string }[]` |
+| `core/diffview.ts` | 句级行内 diff（显示用；句首启发式，v1.6） | `sentDiff(before, after): { type: 'same'\|'del'\|'ins'; text: string }[]` `project(s)` |
 | `core/indent.ts` | 首行缩进写入/载入剥离变换（v1.2） | `indentWrite(text): string`（导出侧，仅 md） `indentStrip(text): string`（载入侧逆变换，写入档开启时） |
-| `core/fsio.ts` | 双后端、句柄库、跨通道串行防抖自动存 | `openDoc(): Promise<DocFile\|null>` `restoreDoc(): Promise<DocFile\|null>` `resetDoc(name?)` `saveDoc(t)` `saveDocAs(t)` `capturePromptTarget(): PromptTarget\|null` `writePrompt(t, target?)` `cancelPrompt(target)` `findSiblingPrompt(name)` `onSaveState(cb)` |
-| `core/state.ts` | DocState + 生命周期（flags/墓碑）+ 恢复编排 + 缩进开关 | `store = { state, dispatch(action), subscribe(fn) }` `restoreFromPrompt(file, cur, promptText)` `buildPrompt(state, copy?)` `exportText(blocks, kind)` `setIndentWrite(b)` |
+| `core/fsio.ts` | 双后端、句柄库、跨通道串行防抖自动存 | `openDoc(): Promise<DocFile\|null>` `restoreDoc(): Promise<DocFile\|null>` `resetDoc(name?)` `saveDoc(t)` `saveDocAs(t)` `capturePromptTarget(): PromptTarget\|null` `writePrompt(t, target?)` `cancelPrompt(target)` `findSiblingPrompt(name)` `onSaveState(cb): () => void` |
+| `core/state.ts` | DocState + 生命周期（flags/墓碑）+ 恢复编排 + 缩进开关 + 日记抑制/失败通道 | `store = { state, dispatch(action), subscribe(fn) }` `restoreFromPrompt(file, cur, promptText)` `buildPrompt(state, copy?)` `exportText(blocks, kind)` `setIndentWrite(b)` `onPromptError(cb)` |
 | `editor/editor.ts` | Milkdown 工厂、切节、命令、修订 decoration、光标上报 | `mountEditor(el, sectionSource, hooks)` `destroyEditor(): string \| undefined`（返回最终文本） `peekText(): string \| undefined`（非破坏性取值） `moveBlock(dir)` `scrollEditorBlock(ordinal, blockId?)` `setRevisions(ops, blocks)` |
-| `editor/sourcemode.ts` | 源码模式（CodeMirror 6，批次 3） | `mountSource(el, text, hooks)` `peekSource(): string \| undefined`（非破坏性取值并清尾回调） `destroySource(): string \| undefined` `scrollSourceTo(line)`（v1.5.1） |
-| `editor/floater.ts` | 通用块浮层 | `openFloater({ title, source, lang, renderPreview(el, src), onSave })` |
+| `editor/sourcemode.ts` | 源码模式（CodeMirror 6）+ 选区上报 + 行内格式命令 | `mountSource(el, text, hooks)` `peekSource(): string \| undefined` `destroySource(): string \| undefined` `scrollSourceTo(line)` `sourceTopLine()` `scrollSourceToFrac(line, frac)` `runInlineSrc(a)` `runLinkSrc(href)` |
+| `editor/floater.ts` | 通用块浮层（含批注三型选择器） | `openFloater({ title, source, lang?, kinds?, renderPreview(el, src), onSave(next, kind?) })` `openPopover(anchor, build)` `registerCloser/releaseCloser` |
 | `editor/views.ts` | node view：mermaid/math/xmlcard/footnote/image | 供 editor.ts 注册的 `nodeViews` 表 |
 | `editor/static.ts` | 静态节渲染 + 后处理（卡片/图/公式/脚注） | `renderStatic(blocks, el, resolveImage?): void` |
 | `editor/htmlguard.ts` | XML/危险 html/孤立 img 的会话标记围栏（flush 忠实） | `protectHtmlBlocks(src, tok)` `restoreHtmlBlocks(md, tok)` `MD2P_LANG` |
@@ -275,11 +276,12 @@ withdrawn: 1
 | `styles.css` | 布局 + 3 主题 × 2 风格（CSS 变量） | — |
 | `main.ts` | 装配：布局骨架、打开/新建、store 接线、模式分发 | — |
 
-当前测试（`bun test`）：11 个文件、154 例。`test/ir.test.ts` `test/changes.test.ts` `test/diffview.test.ts`（句级 diff）`test/promptmd.test.ts`（§3 往返 + 生命周期/C 类 + semver 兼容）`test/state.test.ts`（隐藏/撤回两阶段/复活/清空 + 延迟 Prompt 持久化全链路）`test/hash.test.ts` `test/roundtrip.test.ts`（diff→render→parse→rebind→applyOps 全链路，含墓碑直通）`test/fsio.test.ts`（路径 helper + 跨目标/跨通道串行化、save-as 顺序/失败、目标代次/取消、同名 Prompt 错误分流）`test/htmlguard.test.ts` `test/indent.test.ts` `test/linkref.test.ts`。
+当前测试（`bun test`）：13 个文件、211 例。`test/ir.test.ts`（含标签区域合并）`test/changes.test.ts`（含 swap）`test/diffview.test.ts`（句级 diff + 句首启发式）`test/promptmd.test.ts`（协议 2.0 往返 + 生命周期 + patch 形 + semver 拒绝 1.x）`test/state.test.ts`（隐藏/撤回/复活 + note.kind + swapAlive + 延迟持久化 + suppressPrompt B2）`test/hash.test.ts` `test/roundtrip.test.ts`（diff→render→parse→rebind→applyOps 全链路，含 swap/墓碑直通）`test/fsio.test.ts`（路径 helper + 跨目标/跨通道串行化、save-as 顺序/失败、目标代次/取消、同名 Prompt 错误分流）`test/htmlguard.test.ts` `test/indent.test.ts` `test/linkref.test.ts` `test/reparse.test.ts`（增量重解析 id 账）`test/mddom.test.ts`（safeUrl 表驱动 XSS 回归）。
+E2E 门禁（Playwright，非零退出报失败）：`life.mjs` `v13.mjs` `note.mjs` `srcmode.mjs` `export.mjs` `look.mjs`（v1.5 既有 6 套）+ `measure.mjs`（页宽）`splitalign.mjs`（分屏行对齐）`sourceanno.mjs`（源码/分屏批注）`xmlmode.mjs`（XML 承载）（v1.6 新增 4 套）；`qa15-*`、`perf*` 为人工探针，不作门禁。
 
 ## 8. 已知边界（v2 候选，现在不写）
 
-卡片内富文本就地编辑；拖拽移动；超大 md 的编辑器内虚拟滚动；AI 回改反向 diff；多文档标签页；恢复路径的 gap 保真（恢复只承诺文本相等，非标准空行/行尾以当前文档风格归一）；move 类导入墓碑的复活（blockId 缺失，按首行文本重绑，重复首行歧义时不保证原位）。
+卡片内富文本就地编辑；拖拽移动块；超大 md 的编辑器内虚拟滚动；多文档标签页（及由此引申的 A/B/C 版本对比，用户批注记录）；恢复路径的 gap 保真（恢复只承诺文本相等，非标准空行/行尾以当前文档风格归一）；AI 回改反向 diff **已否决**（用户裁决，见「不做」）；微排版/OpenType 设置组（hanging-punctuation、text-autospace、text-spacing-trim、text-wrap、tnum/onum——浏览器可达子集，@supports 门控；浏览器内 LaTeX 编译不做，形态不允许）。
 
 ## 9. 已知限制（终验确认，接受并备案）
 
@@ -289,3 +291,6 @@ withdrawn: 1
 4. **hideAll 在防抖窗内**点击时，尾部输入以一条新 pending op 入账（再点一次即清，不丢字）。
 5. **编辑器载入后极快速点按 Enter** 有选区竞态（PM 挂载时序），自动化连发可复现，日常输入未触发。
 6. **路径显示只有文件名**（浏览器安全模型不给绝对路径）；打印页眉的「源文件完成时间」来自 `File.lastModified`，新建文档未保存前回退为当前时间。
+7. **软换行续接在块尾**（Shift+Enter 紧接块末）时，增量重解析的头对齐可能把续行认作新块，多记一条 insert（文本无损，可隐藏；v1.6 性能专项备案）。
+8. **XML 修订粒度为整块**：.xml 单 code 块承载，任何编辑记一条整块 replace（大文件 patch 形兜底省 token）；逐行修订是 v2 议题。
+9. **Alt+↑/↓ 调换 XML 卡（标签区域块）**时 swap 只记到区域首块文本（恢复按首行校验，区域整体移动语义近似）；任意行 ⇄ 调换不受影响。
