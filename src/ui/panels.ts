@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import type { DocState, Op } from '../core/ir';
 import { buildPrompt, exportText, type Store } from '../core/state';
 import { downloadFile, joinPath, promptName } from '../core/fsio';

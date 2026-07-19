@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import type { DocState, NoteKind, Op } from './ir';
 import { sentDiff } from './diffview';
 

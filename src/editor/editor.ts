@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** §4.1 活动节 Milkdown 装配；修订可视化全走 ProseMirror decoration，不污染文本。
  *  flush 忠实（§4.1）：过滤默认改写源文的 remarkInlineLink 插件；XML/危险 html/孤立 img 经
  *  会话标记围栏保护（只拆自己生成的）；destroyEditor 返回最终文本（防抖尾巴不丢字）。
@@ -331,7 +332,7 @@ const revPlugin = new Plugin<DecorationSet>({
   props: { decorations: (state) => revKey.getState(state) },
 });
 
-/** Ctrl+A 护栏（QA F1/F2）：光标在 code_block（XML 保护围栏/mermaid 等）内时，
+/** Ctrl+A 护栏（QA F1/F2）：光标在 code_block / math_block（A-2 同型漏洞）内时，
  *  全选只收拢到本块文本——默认的 selectAll 会选满全文，接着打字就把受保护块换成普通段落，
  *  序列化器再把 `<` 转义成 `\<`、整块炸碎成多段。收拢后重打 = 块内文本替换，围栏存活。 */
 const codeSelectAllPlugin = new Plugin({
@@ -340,7 +341,8 @@ const codeSelectAllPlugin = new Plugin({
     handleKeyDown(view, ev) {
       if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== 'a' || ev.shiftKey || ev.altKey) return false;
       const { $from } = view.state.selection;
-      if ($from.parent.type.name !== 'code_block') return false;
+      const tn = $from.parent.type.name;
+      if (tn !== 'code_block' && tn !== 'math_block') return false;
       const start = $from.start();
       const end = start + $from.parent.content.size;
       if (end <= start) return false;

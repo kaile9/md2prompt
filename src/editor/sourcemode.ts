@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** editor/sourcemode.ts — 源码模式（批次 3）：CodeMirror 6 承载节源文。
  *  与渲染模式同一条 flush 管线（onChange 200ms 防抖 → applySectionText）；
  *  XML/图表在此永远以原文可见可改（转义灾难的最终保险）。修订痕迹属渲染模式，此处不画。 */

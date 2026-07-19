@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** SPEC §2 核心类型 + §7 core/ir.ts 冻结签名。
  *  Block 是唯一文档单位；变更引擎只 diff Block 数组。 */
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** §4.1 句级行内 diff（显示用）：旧片段 del、新片段 ins、相同 same。
  *  v1.2：粒度从词级改为句级——修改以整句呈现（旧句删除线 + 新句高亮），
  *  不再出现逐字/逐词碎片（用户反馈 v1 bug 1）。协议层不受影响（Prompt.md 本就是整块 before/after）。 */

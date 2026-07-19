@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** §4.2 通用块浮层：文本域 + 预览槽 + 保存/取消。消费者：mermaid / math / xmlcard / html-img。
  *  另提供 openPopover（脚注定义等轻量弹窗）与 registerCloser（records.ts 自建模态复用单例语义）。 */
 import type { NoteKind } from '../core/ir';

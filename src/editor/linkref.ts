@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 // editor/linkref.ts — 引用式链接保真（SPEC §4.1 flush 忠实）。
 // definition → linkDef 自定义节点（editor.ts 注册 schema，序列化经 html 原子逐字回吐）；
 // linkReference/imageReference → inline html 原子（Milkdown 原生逐字往返）。

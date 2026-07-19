@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 // core/fsio.ts — 文件 IO 双后端（SPEC §6）。模块级单例持有当前文件/父目录句柄。
 // 不变量：saveDoc/writePrompt 防抖 800ms；无写目标（无句柄/用户拒授权/降级后端）时仅内存保留，不报 failed。
 
@@ -45,7 +46,10 @@ const listeners = new Set<(s: SaveState) => void>();
 const imgCache = new Map<string, string>();
 
 const emit = (s: SaveState) => listeners.forEach(f => f(s));
-export function onSaveState(cb: (s: SaveState) => void): void { listeners.add(cb); }
+export function onSaveState(cb: (s: SaveState) => void): () => void { // A-8：返回退订（与 store.subscribe 对称）
+  listeners.add(cb);
+  return () => { listeners.delete(cb); };
+}
 async function tracked(p: Promise<unknown>, propagate = false): Promise<void> { // 自动保存只报状态；显式保存还要把失败交还调用方
   pending++; emit('saving');
   try { await p; if (--pending === 0) emit('saved'); }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** ui/progress.ts — 进度双模式（v1.4）：顶部传统细条 / 右侧 minimap（VS Code 式直观预览）。
  *  minimap：块级骨架条（高度 ∝ 块文本量，不渲文字缩略——太贵）、修订标记、viewport 框、点击跳转。 */
 import type { DocState } from '../core/ir';

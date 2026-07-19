@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 // editor/static.ts — 非活动节静态渲染（SPEC §4.1）：mddom 统一管线，分片挂载不阻塞。
 import type { Block } from '../core/ir';
 import { newCtx, renderBlock, scanDefs, type ResolveImage } from './mddom';

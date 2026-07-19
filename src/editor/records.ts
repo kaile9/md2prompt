@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 // editor/records.ts — JSONL 数据集模式（SPEC §4.3）：记录卡片、虚拟列表、记录浮层编辑器。
 import type { Block } from '../core/ir';
 import { S } from '../ui/strings';

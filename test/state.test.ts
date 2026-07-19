@@ -263,6 +263,41 @@ test('load 可延迟 Prompt 持久化，配对决策完成后再显式启动 sta
   }
 });
 
+test('B2：恢复三选「忽略」后，后续编辑不再覆写既有 Prompt.md', async () => {
+  const promptWrites: string[] = [];
+  const docHandle = {
+    name: 'ignored.md',
+    async queryPermission() { return 'granted'; },
+    async requestPermission() { return 'granted'; },
+    async getFile() { return { text: async () => '初始', lastModified: 1 }; },
+    async createWritable() { return { async write() {}, async close() {} }; },
+  };
+  const promptHandle = {
+    async createWritable() {
+      return { async write(text: string) { promptWrites.push(text); }, async close() {} };
+    },
+  };
+  const dir = { async getFileHandle() { return promptHandle; } };
+  const original = (globalThis as any).window;
+  (globalThis as any).window = {
+    showOpenFilePicker: async () => [docHandle],
+    showDirectoryPicker: async () => dir,
+  };
+  try {
+    const fs = await import('../src/core/fsio');
+    await fs.openDoc();
+    store.dispatch({ type: 'load', file: FILE, cur: [blk('b1', '初始')], deferPrompt: true });
+    store.dispatch({ type: 'suppressPrompt' }); // 用户选「忽略」：不毁既有记录
+    store.dispatch({ type: 'patchCur', cur: [blk('b1', '编辑后')] }); // 首次编辑 commit
+    await Bun.sleep(1900);
+    expect(promptWrites).toEqual([]); // 全程不再覆写（旧版：首次编辑即破功）
+    fs.resetDoc();
+  } finally {
+    if (original === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = original;
+  }
+});
+
 test('subscribe 通知与 setSaveState', () => {
   let n = 0, seen: any = undefined;
   const off = store.subscribe((s: any) => { n++; seen = s; });

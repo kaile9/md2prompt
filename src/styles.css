@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MPL-2.0 */
 /* styles.css — 布局 + 3 主题 × 2 风格（CSS 变量）+ 跨模块类契约（SPEC §5）。
    行号徽标：#doc 内块根 data-line 经 ::before 渲染；#gutter 留空、宽度为 0。
    主题/风格变量只定义在对应属性选择器里；基础规则带 fallback，未挂属性也可运行。 */

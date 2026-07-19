@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 // editor/htmlguard.ts — 会话标记围栏保护（SPEC §4.1 flush 忠实，纯函数无编辑器依赖）。
 // 节源文 ↔ 编辑器源文：XML 标签块/危险 html/孤立 <img> 块 → md2prompt-{tok}-{xml|raw|img} 围栏，
 // 内容逐字保留；只拆本会话标记的围栏（外来同名围栏原样保留）。

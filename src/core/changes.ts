@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import { blockLineMap, type Block, type Op } from './ir';
 
 /** 协议 time 一律本地 HH:MM（SPEC §3 规则 3）；state.ts 人工 op 同用。 */

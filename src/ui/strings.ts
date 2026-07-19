@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 /** §1 红线：UI 文案全部中文、集中于此。 */
 export const S = {
   appName: '2youg1的MD2Prompt',
@@ -146,6 +147,7 @@ export const S = {
   savedOk: '已存',
   saving: '写入中…',
   saveFailed: '保存失败',
+  promptFailed: '日记写入失败（文档本体已存）',
 
   // 顶栏（光标行列）与路径行（修订面板内）
   cursorPos: (l: number, c: number): string => `行 ${l} · 列 ${c}`,
