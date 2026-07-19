@@ -186,6 +186,7 @@ button { font-family: inherit; }
   border: 1px solid var(--accent, #3b6ea5); border-radius: 2px; pointer-events: none;
 }
 #doc {
+  width: 100%; /* BUG 2 根因：auto margin 会把 grid stretch 弱化成 fit-content，页宽>内容宽时设置失效；显式宽度让 max-width 真正生效 */
   max-width: calc(var(--measure, 42rem) + 6rem); /* 左 4rem padding 容纳行号，不计入页宽 */
   margin: 0 auto; padding: 2.5rem 2rem 30vh 4rem;
   letter-spacing: var(--doc-track, 0);
