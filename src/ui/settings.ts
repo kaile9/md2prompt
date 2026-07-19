@@ -26,6 +26,8 @@ interface Prefs {
   latinCustom: string;
   dirPrefix: string; // 文档目录前缀：复制路径时拼出完整路径（浏览器不暴露绝对路径，唯一通道）
   shortcuts: Record<string, string>; // 动作 → 组合键覆盖（v1.4；空 = 全默认）
+  /** 微排版 + OpenType（v2.0，@supports 门控渐进增强，不支持的平台静默无效）。 */
+  micro: { hanging: boolean; autospace: boolean; spacingTrim: boolean; textWrap: boolean; tnum: boolean; onum: boolean };
 }
 
 const KEY = 'md2prompt.prefs';
@@ -50,6 +52,7 @@ const DEFAULTS: Prefs = {
   latinCustom: '',
   dirPrefix: '',
   shortcuts: {},
+  micro: { hanging: true, autospace: true, spacingTrim: true, textWrap: true, tnum: false, onum: false },
 };
 
 const CJK_STACKS: Record<string, string> = {
@@ -81,6 +84,8 @@ function loadPrefs(): Prefs {
     if (typeof p.guideLines !== 'boolean') p.guideLines = DEFAULTS.guideLines;
     if (p.progress !== 'bar' && p.progress !== 'map' && p.progress !== 'off') p.progress = DEFAULTS.progress;
     if (typeof p.shortcuts !== 'object' || p.shortcuts === null) p.shortcuts = {};
+    if (typeof p.micro !== 'object' || p.micro === null) p.micro = { ...DEFAULTS.micro };
+    else p.micro = { ...DEFAULTS.micro, ...p.micro };
     p.fontWeight = Math.min(900, Math.max(100, p.fontWeight || DEFAULTS.fontWeight));
     p.brightness = Math.min(150, Math.max(50, p.brightness || DEFAULTS.brightness));
     p.contrast = Math.min(150, Math.max(50, p.contrast || DEFAULTS.contrast));
@@ -115,6 +120,12 @@ export function applyPrefs(p: Prefs = loadPrefs()): void {
   root.dataset.guides = p.guideLines && p.style === 'humanist' ? 'on' : 'off';
   root.dataset.progress = p.progress;
   root.dataset.lighting = p.brightness === 100 && p.contrast === 100 ? 'off' : 'on'; // 中性值不挂滤镜（评审 m1）
+  root.dataset.microHanging = p.micro.hanging ? 'on' : 'off';
+  root.dataset.microAutospace = p.micro.autospace ? 'on' : 'off';
+  root.dataset.microSpacingtrim = p.micro.spacingTrim ? 'on' : 'off';
+  root.dataset.microWrap = p.micro.textWrap ? 'on' : 'off';
+  root.dataset.otTnum = p.micro.tnum ? 'on' : 'off';
+  root.dataset.otOnum = p.micro.onum ? 'on' : 'off';
   const st = root.style;
   st.setProperty('--font-size', `${p.fontSize}px`);
   st.setProperty('--line-height', String(p.lineHeight));
@@ -173,6 +184,13 @@ export function mountSettings(): void {
     <div class="set-row"><span class="set-label">${S.setProgress}</span><span class="set-ctl">${seg('progress', [['bar', S.progressBar], ['map', S.progressMap], ['off', S.progressOff]])}</span></div>
     <div class="set-row"><span class="set-label">${S.setIndent}</span><span class="set-ctl">${seg('indent', [['off', S.indentOff], ['render', S.indentRender], ['write', S.indentWrite]])}</span></div>
     <div class="set-row"><span class="set-label">${S.setGutter}</span><span class="set-ctl"><input type="checkbox" name="gutter"></span></div>
+    <div class="set-row sc-head"><span class="set-label">${S.setMicro}</span><span class="set-hint">${S.microHint}</span></div>
+    <div class="set-row"><span class="set-label">${S.microHanging}</span><span class="set-ctl"><input type="checkbox" name="microHanging"></span></div>
+    <div class="set-row"><span class="set-label">${S.microAutospace}</span><span class="set-ctl"><input type="checkbox" name="microAutospace"></span></div>
+    <div class="set-row"><span class="set-label">${S.microSpacingTrim}</span><span class="set-ctl"><input type="checkbox" name="microSpacingTrim"></span></div>
+    <div class="set-row"><span class="set-label">${S.microTextWrap}</span><span class="set-ctl"><input type="checkbox" name="microTextWrap"></span></div>
+    <div class="set-row"><span class="set-label">${S.microTnum}</span><span class="set-ctl"><input type="checkbox" name="microTnum"></span></div>
+    <div class="set-row"><span class="set-label">${S.microOnum}</span><span class="set-ctl"><input type="checkbox" name="microOnum"></span></div>
     <div class="set-row sc-head"><span class="set-label">${S.setShortcuts}</span><span class="set-hint">${S.scHint}</span></div>
     ${(Object.keys(SC_LABEL) as ScAction[])
       .map(
@@ -230,6 +248,14 @@ export function mountSettings(): void {
     latinCustom: q<HTMLInputElement>('input[name="latinCustom"]').value,
     dirPrefix: q<HTMLInputElement>('input[name="dirPrefix"]').value.trim(),
     shortcuts: readShortcuts(),
+    micro: {
+      hanging: q<HTMLInputElement>('input[name="microHanging"]').checked,
+      autospace: q<HTMLInputElement>('input[name="microAutospace"]').checked,
+      spacingTrim: q<HTMLInputElement>('input[name="microSpacingTrim"]').checked,
+      textWrap: q<HTMLInputElement>('input[name="microTextWrap"]').checked,
+      tnum: q<HTMLInputElement>('input[name="microTnum"]').checked,
+      onum: q<HTMLInputElement>('input[name="microOnum"]').checked,
+    },
   });
 
   /** 快捷键覆盖表：只收与默认不同的值。 */
@@ -291,6 +317,12 @@ export function mountSettings(): void {
     q<HTMLInputElement>('input[name="cjkCustom"]').value = p.cjkCustom;
     q<HTMLInputElement>('input[name="latinCustom"]').value = p.latinCustom;
     q<HTMLInputElement>('input[name="dirPrefix"]').value = p.dirPrefix;
+    q<HTMLInputElement>('input[name="microHanging"]').checked = p.micro.hanging;
+    q<HTMLInputElement>('input[name="microAutospace"]').checked = p.micro.autospace;
+    q<HTMLInputElement>('input[name="microSpacingTrim"]').checked = p.micro.spacingTrim;
+    q<HTMLInputElement>('input[name="microTextWrap"]').checked = p.micro.textWrap;
+    q<HTMLInputElement>('input[name="microTnum"]').checked = p.micro.tnum;
+    q<HTMLInputElement>('input[name="microOnum"]').checked = p.micro.onum;
     backdrop.querySelectorAll<HTMLInputElement>('input.sc-key').forEach((el) => {
       const a = el.dataset.sc as ScAction;
       el.value = p.shortcuts[a] ?? SC_DEFAULT[a];

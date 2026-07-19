@@ -338,6 +338,26 @@ button { font-family: inherit; }
 [data-indent='render'] #doc p { text-indent: 2em; }
 [data-indent='render'] #doc :is(li, blockquote, td, th, pre, .record-card) p { text-indent: 0; }
 
+/* 微排版 + OpenType（v2.0 设置组；@supports 门控，不支持的平台静默无效 = 渐进增强） */
+@supports (hanging-punctuation: first) {
+  [data-micro-hanging='on'] #doc { hanging-punctuation: first allow-end last; }
+}
+@supports (text-autospace: normal) {
+  [data-micro-autospace='on'] #doc { text-autospace: normal; }
+}
+@supports (text-spacing-trim: normal) {
+  [data-micro-spacingtrim='on'] #doc { text-spacing-trim: normal; }
+}
+@supports (text-wrap: pretty) {
+  [data-micro-wrap='on'] #doc p { text-wrap: pretty; }
+}
+@supports (text-wrap: balance) {
+  [data-micro-wrap='on'] #doc :is(h1, h2, h3, h4, h5, h6) { text-wrap: balance; }
+}
+[data-ot-tnum='on'][data-ot-onum='on'] #doc { font-variant-numeric: tabular-nums oldstyle-nums; }
+[data-ot-tnum='on'] #doc { font-variant-numeric: tabular-nums; }
+[data-ot-onum='on'] #doc { font-variant-numeric: oldstyle-nums; }
+
 /* 跨模块类契约（editor 代理渲染，样式归此文件） */
 .rev-del { color: var(--c-del, #b0483e); text-decoration: line-through; text-decoration-thickness: 1.5px; }
 .rev-ins { background: color-mix(in srgb, var(--c-ins, #3a7d57) 24%, transparent); border-radius: 2px; }

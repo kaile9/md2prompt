@@ -49,6 +49,39 @@ MD2Prompt's answer: **the protocol matters more than the editor.** The editor is
 ![Night theme](docs/assets/night.png)
 ![Split view](docs/assets/split.png)
 
+## Manual
+
+### Opening & saving
+
+- 「打开」 uses the browser's File System Access API (Chrome/Edge); Firefox falls back to upload/download. File handles live in your own IndexedDB — click anywhere after a restart to resume the last document.
+- On open you'll be asked for **parent-directory permission**: it resolves relative image paths and writes the `name.prompt.md` diary next to your document. Declining is fine — images show placeholders and the diary stops auto-saving (「下载 Prompt.md」 still works manually).
+- Every action is auto-saved inside an 800 ms debounce (top bar: 已存/写入中/失败）. Diary-write failures are reported on a separate channel from document-save failures.
+
+### Editing & tracking
+
+- Just edit. Replace / insert / delete become cards automatically; each card offers 「隐藏」 (confirm & collapse, still exported) and 「撤回」 (two-stage: preview first, then confirm the rollback).
+- **Swap**: put the cursor in a paragraph and press `Alt+↑/↓` to swap with the neighbor; or click the rail's 「⇄」 and enter a line number to swap with that line's block.
+
+### Notes (three kinds)
+
+- Select text → floating 「✎」, or press `Alt+M` with no selection (current block). Pick the kind at the top of the floater:
+  - **命令 request** — "do exactly this": the AI executes and returns revised text;
+  - **建议 suggest** — "I think this is better, your call": the AI decides;
+  - **讨论 discuss** — "I'm stuck here": the AI only answers, no edits.
+- Annotating the same block again edits the existing note (text, kind, or quote).
+
+### Restore & pairing
+
+- A `name.prompt.md` next to the document with a matching hash restores all tracked changes automatically.
+- On hash mismatch (the document changed externally) you choose: **new baseline** / **try restoring anyway** / **ignore** (keep the old diary untouched — nothing gets overwritten this session).
+
+### Exporting to the AI
+
+- **复制 Prompt**: the daily path — tombstones omitted, self-explanatory structure, Opus/K3-class models read it directly;
+- **下载 Prompt.md**: the full diary (with tombstones);
+- **下载干净副本**: current document text, no marks;
+- **导出 PDF**: browser print, header = source-file completion time, footer = export time.
+
 ## The protocol at a glance (2.0)
 
 ```xml
@@ -97,7 +130,10 @@ Full protocol in [SPEC.md](SPEC.md) §3 (Chinese; the single source of truth, wi
 
 **Engineering**
 
-- Unit tests 154 → 211 (13 files); E2E gates 6 → 10 (new: measure / split-align / source-annotate / xml-mode); MPL-2.0 SPDX headers on all 27 source files; CSP meta in index.html; table-driven safeUrl XSS regression suite.
+- Unit tests 154 → 211 (13 files); E2E gates 6 → 11 (new: measure / split-align / source-annotate / xml-mode / microtypography); MPL-2.0 SPDX headers on all 27 source files; CSP meta in index.html; table-driven safeUrl XSS regression suite.
+- GitHub Actions: `check` (tsc + unit tests + build) and `e2e` (all 11 gates) on every push; `v*` tags auto-build and attach the single-file HTML to a GitHub Release.
+- Microtypography + OpenType settings group: hanging punctuation / CJK-Latin autospace / punctuation trim / pretty-balance wrapping / tabular nums / oldstyle nums — `@supports`-gated, silently ignored where unsupported.
+- Bilingual manual (中文 README.md · English README.en.md).
 
 ### 1.5.2
 
