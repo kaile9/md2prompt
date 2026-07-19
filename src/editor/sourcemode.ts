@@ -114,6 +114,26 @@ export function destroySource(): string | undefined {
   return t;
 }
 
+/** 顶部可见行（节相对 1-based）与行内偏移比（分屏块锚滚动同步用，v1.6）。 */
+export function sourceTopLine(): { line: number; frac: number } | null {
+  const v = view;
+  if (!v) return null;
+  const st = v.scrollDOM.scrollTop;
+  const block = v.lineBlockAtHeight(st);
+  const line = v.state.doc.lineAt(block.from).number;
+  const frac = block.height > 0 ? Math.min(1, Math.max(0, (st - block.top) / block.height)) : 0;
+  return { line, frac };
+}
+
+/** 滚动到节内第 line 行并附加行内偏移比（分屏块锚滚动同步用，v1.6）。 */
+export function scrollSourceToFrac(line: number, frac: number): void {
+  const v = view;
+  if (!v) return;
+  const l = v.state.doc.line(Math.min(v.state.doc.lines, Math.max(1, line)));
+  const block = v.lineBlockAt(l.from);
+  v.scrollDOM.scrollTop = block.top + frac * block.height;
+}
+
 /** 滚动到节内第 line 行（1-based，节相对）并居中（源码/分屏跳转落点，v1.5.1）。 */
 export function scrollSourceTo(line: number): void {
   const v = view;

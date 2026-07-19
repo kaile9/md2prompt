@@ -17,7 +17,7 @@ import * as fs from './core/fsio';
 import { hashText } from './core/hash';
 import { parsePrompt } from './core/promptmd';
 import { destroyEditor, mountEditor, moveBlock, peekText, runInline, scrollEditorBlock, setRevisions, currentBlockIndex, type EditorHooks } from './editor/editor';
-import { destroySource, mountSource, peekSource, scrollSourceTo } from './editor/sourcemode';
+import { destroySource, mountSource, peekSource, scrollSourceTo, sourceTopLine, scrollSourceToFrac } from './editor/sourcemode';
 import { renderStatic, type ResolveImage } from './editor/static';
 import { mountVirtualList, openRecordEditor } from './editor/records';
 import { closeFloater, floatRoot, openFloater, openPopover, registerCloser } from './editor/floater';
@@ -623,26 +623,67 @@ function syncRail(st: DocState | null): void {
   if (rail) rail.hidden = !st || st.file.kind !== 'md' || viewMode !== 'render';
 }
 
-/** 分屏双侧滚动比例同步：scrollTop/可滚区间 映射，rAF 解回声（A→B 触发的 B scroll 不回写 A）。 */
-function syncSplit(a: HTMLElement, b: HTMLElement): void {
-  let lock = false;
-  const link = (src: HTMLElement, dst: HTMLElement): void => {
-    src.addEventListener(
-      'scroll',
-      () => {
-        if (lock) return;
-        lock = true;
-        const max = src.scrollHeight - src.clientHeight;
-        dst.scrollTop = max > 0 ? (src.scrollTop / max) * (dst.scrollHeight - dst.clientHeight) : 0;
-        requestAnimationFrame(() => {
-          lock = false;
-        });
-      },
-      { passive: true },
-    );
+/** 分屏双侧滚动块锚同步（BUG 3）：左 CM 行 ↔ 右 .blk[data-line]，对应块顶对齐 + 块内比例插值。
+ *  比例同步是「各行等高」的谎（渲染行高≠源码行高）；块锚是诚实方案：文本块在哪里就对到哪里。
+ *  块行跨 = 下一块起始行差（末块取 1）；rAF 解回声。 */
+function syncSplit(left: HTMLElement, right: HTMLElement): void {
+  const secStartLine = (): number => {
+    const s = sections[activeIdx];
+    return (s && store.state?.cur[s.start]?.lineStart) || 1;
   };
-  link(a, b);
-  link(b, a);
+  const blks = (): HTMLElement[] => [...right.querySelectorAll<HTMLElement>('.blk[data-line]')];
+  const spanOf = (el: HTMLElement, next?: HTMLElement): number =>
+    next ? Math.max(1, Number(next.dataset.line) - Number(el.dataset.line)) : 1;
+  let lock = false;
+  const guard = (fn: () => void): void => {
+    if (lock) return;
+    lock = true;
+    fn();
+    requestAnimationFrame(() => {
+      lock = false;
+    });
+  };
+  left.addEventListener(
+    'scroll',
+    () =>
+      guard(() => {
+        const t = sourceTopLine();
+        if (!t) return;
+        const abs = secStartLine() + t.line - 1;
+        const els = blks();
+        let target: HTMLElement | undefined;
+        for (const el of els) {
+          if (Number(el.dataset.line) <= abs) target = el;
+          else break;
+        }
+        target ??= els[0];
+        if (!target) return;
+        const i = els.indexOf(target);
+        const span = spanOf(target, els[i + 1]);
+        const frac = Math.min(1, Math.max(0, (abs - Number(target.dataset.line)) / span));
+        const rr = right.getBoundingClientRect();
+        const er = target.getBoundingClientRect();
+        right.scrollTop = er.top - rr.top + right.scrollTop + frac * er.height;
+      }),
+    { passive: true },
+  );
+  right.addEventListener(
+    'scroll',
+    () =>
+      guard(() => {
+        const els = blks();
+        const top = right.getBoundingClientRect().top;
+        for (let k = 0; k < els.length; k++) {
+          const r = els[k].getBoundingClientRect();
+          if (r.bottom <= top) continue;
+          const frac = r.height > 0 ? Math.min(1, Math.max(0, (top - r.top) / r.height)) : 0;
+          const abs = Number(els[k].dataset.line) + frac * spanOf(els[k], els[k + 1]);
+          scrollSourceToFrac(abs - secStartLine() + 1, frac);
+          break;
+        }
+      }),
+    { passive: true },
+  );
 }
 
 document.addEventListener('md2p-jump', (ev) => {
