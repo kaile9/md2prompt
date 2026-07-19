@@ -69,6 +69,14 @@ export interface DocState {
 
 export type DocKind = DocState['file']['kind'];
 
+/* ---- 提示词式标签区域（editor/htmlguard.ts 共享同一组规则，保证 IR 块 ≡ 编辑器围栏） ---- */
+/** 档一：整行只有开/闭/自闭合标签（可带属性），非标准 HTML 标签名。 */
+export const PROMPT_OPEN = /^\s{0,3}<([a-z][a-z0-9-]{1,24})(?:\s+(?:"[^"]*"|'[^']*'|[^'">])*)?>\s*$/;
+export const PROMPT_CLOSE = /^\s{0,3}<\/([a-z][a-z0-9-]{1,24})>\s*$/;
+export const DANGEROUS_TAG = /^(?:script|style|iframe|object|embed)$/;
+/** CommonMark type 6 块级标签（与 htmlguard 同表）。 */
+export const BLOCK6_TAG = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)$/;
+
 /** fsio 打开结果；类型放此共享，避免 core 内循环依赖。mtime = 源文件最后修改时间（打印页眉用）。 */
 export interface DocFile {
   name: string;
@@ -141,14 +149,16 @@ function parseMd(text: string): Block[] {
     });
     prevEnd = end;
   }
-  return finish(blocks, text, prevEnd, () => ({
-    id: 'b1',
-    kind: 'para',
-    text,
-    gap: '',
-    lineStart: 0,
-    lineEnd: 0,
-  }));
+  return mergeTagRegions(
+    finish(blocks, text, prevEnd, () => ({
+      id: 'b1',
+      kind: 'para',
+      text,
+      gap: '',
+      lineStart: 0,
+      lineEnd: 0,
+    })),
+  );
 }
 
 function parseJsonl(text: string): Block[] {
@@ -186,6 +196,37 @@ function finish(blocks: Block[], text: string, prevEnd: number, fallback: () => 
   if (blocks.length > 0) blocks[blocks.length - 1].text += text.slice(prevEnd);
   else if (text !== '') blocks.push(fallback());
   return blocks;
+}
+
+/** 档一标签区域合并：开标签块（整行开标签、非标准名、非自闭合）到同名闭标签块的连续区块并为一块。
+ *  保证「IR 块 ≡ 编辑器 XML 卡围栏」1:1——装饰/光标/批注/跳转的节点序映射前提（v1.6 BUG5 根治）。
+ *  序列化不变量保持：合并块 text = 首块 text + Σ(gap+text)，与原文切片逐字节相等。
+ *  配对规则与 editor/htmlguard.ts 档一完全一致（同组正则）。 */
+function mergeTagRegions(blocks: Block[]): Block[] {
+  const out: Block[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    const open = b.kind === 'html' ? PROMPT_OPEN.exec(b.text) : null;
+    if (open && open[1] !== 'img' && !BLOCK6_TAG.test(open[1]) && !DANGEROUS_TAG.test(open[1]) && !/\/>\s*$/.test(b.text)) {
+      const closeRe = new RegExp(`^\\s{0,3}</${open[1]}>\\s*$`);
+      let end = -1;
+      for (let j = i + 1; j < blocks.length; j++) {
+        if (blocks[j].kind === 'html' && closeRe.test(blocks[j].text)) {
+          end = j;
+          break;
+        }
+      }
+      if (end > 0) {
+        let text = b.text;
+        for (let k = i + 1; k <= end; k++) text += (blocks[k].gap ?? '\n\n') + blocks[k].text;
+        out.push({ ...b, text });
+        i = end;
+        continue;
+      }
+    }
+    out.push(b);
+  }
+  return out;
 }
 
 function mdMeta(node: RootContent): Block['meta'] {

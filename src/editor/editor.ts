@@ -26,7 +26,7 @@ import { setBlockType, toggleMark, wrapIn } from 'prosemirror-commands';
 import { wrapInList } from 'prosemirror-schema-list';
 import type { Block, Op } from '../core/ir';
 import { project, sentDiff } from '../core/diffview';
-import { protectHtmlBlocks, restoreHtmlBlocks } from './htmlguard';
+import { protectHtmlBlocks, restoreHtmlBlocks, MD2P_LANG } from './htmlguard';
 import { linkrefToHtml } from './linkref';
 import { nodeViews, setViewHooks } from './views';
 import { centerOn, flashEl } from '../ui/progress';
@@ -165,6 +165,20 @@ function nodeTextMap(node: PMNode, pos: number): { text: string; map: number[] }
   return { text, map };
 }
 
+/** code_block/math_block 的源文侧投影：PM 节点纯文本是「去围栏原文」，project() 会误吞字面标记，改用恒等投影。
+ *  XML 卡（md2prompt- 围栏）：before/after 即节点全文；真围栏/数学块：剥首末围栏行。 */
+const identityProj = (s: string): { plain: string; map: number[] } => ({
+  plain: s,
+  map: Array.from({ length: s.length }, (_, k) => k),
+});
+
+const stripFence = (s: string): string => {
+  const lines = s.split('\n');
+  if (/^(`{3,}|~{3,})/.test(lines[0] ?? '')) lines.shift();
+  if (/^\s*(`{3,}|~{3,})\s*$/.test(lines[lines.length - 1] ?? '')) lines.pop();
+  return lines.join('\n');
+};
+
 function replaceDecos(node: PMNode, pos: number, op: Extract<Op, { type: 'replace' }>): Decoration[] {
   // 撤回预令：新文本整句删除线预览 + 原文以「将恢复」幽灵块预置
   if (op.state === 'withdrawing') {
@@ -174,8 +188,19 @@ function replaceDecos(node: PMNode, pos: number, op: Extract<Op, { type: 'replac
     ];
   }
   const { text, map } = nodeTextMap(node, pos);
-  const pb = project(op.before);
-  const pa = project(op.after);
+  let pb: { plain: string; map: number[] };
+  let pa: { plain: string; map: number[] };
+  if (node.type.name === 'code_block') {
+    const isCard = MD2P_LANG.test(String(node.attrs.language ?? ''));
+    pb = identityProj(isCard ? op.before : stripFence(op.before));
+    pa = identityProj(isCard ? op.after : stripFence(op.after));
+  } else if (node.type.name === 'math_block') {
+    pb = identityProj(stripFence(op.before));
+    pa = identityProj(stripFence(op.after));
+  } else {
+    pb = project(op.before);
+    pa = project(op.after);
+  }
   const out: Decoration[] = [];
   let curA = 0; // pa.plain 游标（≈ PM 纯文本坐标）
   let curB = 0; // pb.plain 游标

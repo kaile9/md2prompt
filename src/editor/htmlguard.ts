@@ -1,13 +1,15 @@
 // editor/htmlguard.ts — 会话标记围栏保护（SPEC §4.1 flush 忠实，纯函数无编辑器依赖）。
 // 节源文 ↔ 编辑器源文：XML 标签块/危险 html/孤立 <img> 块 → md2prompt-{tok}-{xml|raw|img} 围栏，
 // 内容逐字保留；只拆本会话标记的围栏（外来同名围栏原样保留）。
+// 档一标签规则与 core/ir.ts 共享（IR 块 ≡ 本模块围栏，v1.6 起 1:1）。
 
-const DANGEROUS = /^(?:script|style|iframe|object|embed)$/;
+import { BLOCK6_TAG, DANGEROUS_TAG, PROMPT_CLOSE, PROMPT_OPEN } from '../core/ir';
+
+const DANGEROUS = DANGEROUS_TAG;
 const OPEN_TAG = /^\s{0,3}<([a-z][a-z0-9-]{0,24})(?=[\s/>])/;
 // 提示词式标签（v1.3 三档契约）：整行只有开/闭/自闭合标签（可带属性），非标准 HTML 标签名。
 // 开标签跨空行配对到同名闭标签（SKILL 类提示词文档结构）；闭/自闭合单行成卡。
-const PROMPT_OPEN = /^\s{0,3}<([a-z][a-z0-9-]{1,24})(?:\s+(?:"[^"]*"|'[^']*'|[^'">])*)?>\s*$/;
-const PROMPT_CLOSE = /^\s{0,3}<\/([a-z][a-z0-9-]{1,24})>\s*$/;
+const BLOCK6 = BLOCK6_TAG;
 // CommonMark html 块 type 1-5：起判与结束条件（任意位置可起，含段中）
 const T15: [RegExp, RegExp][] = [
   [/^\s{0,3}<(?:script|pre|style|textarea)(?=[\s>])/i, /<\/(?:script|pre|style|textarea)>\s*$/i],
@@ -16,8 +18,6 @@ const T15: [RegExp, RegExp][] = [
   [/^\s{0,3}<![A-Z]/, />\s*$/],
   [/^\s{0,3}<!\[CDATA\[/, /\]\]>\s*$/],
 ];
-// CommonMark type 6 块级标签（任意位置可起）；type 7（其余标签）仅空行后起判
-const BLOCK6 = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)$/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
 /** 围栏语言后缀 → 类型（views.ts 分派用）。 */

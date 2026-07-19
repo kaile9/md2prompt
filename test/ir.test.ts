@@ -182,6 +182,44 @@ describe('xml 解析', () => {
   });
 });
 
+describe('提示词标签区域合并（IR 块 ≡ 编辑器 XML 卡围栏，BUG5 根治）', () => {
+  test('开标签跨空行配对到同名闭标签：整个区域并为一块，序列化逐字节相等', () => {
+    const src = '前文段落。\n\n<zero-trust source="s" intent="i">\n\n第一段，含 *标记* 与 `代码`。\n\n## 区域里的标题\n\n</zero-trust>\n\n后文段落。\n';
+    const blocks = parseDoc(src, 'md');
+    expect(blocks.map((b) => b.kind)).toEqual(['para', 'html', 'para']);
+    const region = blocks[1];
+    expect(region.text).toBe('<zero-trust source="s" intent="i">\n\n第一段，含 *标记* 与 `代码`。\n\n## 区域里的标题\n\n</zero-trust>');
+    expect([region.lineStart, region.lineEnd]).toEqual([3, 9]);
+    expect(serializeBlocks(blocks)).toBe(src);
+  });
+
+  test('区域内含代码围栏照常合并（围栏文本逐字保留）', () => {
+    const src = '<xtag>\n\n```\ncode\n```\n\n</xtag>\n';
+    const blocks = parseDoc(src, 'md');
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].kind).toBe('html');
+    expect(serializeBlocks(blocks)).toBe(src);
+  });
+
+  test('未闭合/标准标签/img/自闭合不合并', () => {
+    const unclosed = '<identity>\n\n段落。\n';
+    expect(parseDoc(unclosed, 'md').map((b) => b.kind)).toEqual(['html', 'para']);
+    const std = '<div>\n\n段落。\n\n</div>\n';
+    expect(parseDoc(std, 'md').map((b) => b.kind)).toEqual(['html', 'para', 'html']); // div 走 CommonMark 渲染档，不进合并
+    const selfClose = '<br/>\n';
+    expect(parseDoc(selfClose, 'md')).toHaveLength(1);
+  });
+
+  test('相邻两段同名标签各自配对', () => {
+    const src = '<xtag>\n\n甲\n\n</xtag>\n\n<xtag>\n\n乙\n\n</xtag>\n';
+    const blocks = parseDoc(src, 'md');
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].text).toContain('甲');
+    expect(blocks[1].text).toContain('乙');
+    expect(serializeBlocks(blocks)).toBe(src);
+  });
+});
+
 describe('serializeBlocks / blockLineMap 编辑行为', () => {
   test('新建块缺省 gap：中部 "\\n\\n"，首部 ""', () => {
     const blocks = parseDoc('# A\n\n乙\n', 'md');
