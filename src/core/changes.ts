@@ -172,15 +172,14 @@ export function applyOps(base: Block[], ops: Op[], dir: 1 | -1): Block[] {
           blockLineMap(arr);
         }
         break;
-      case 'move': {
-        // from/to 行号随编辑漂移，位置按锚点近似落位；diffBlocks 不产生 move，仅供显式命令/导入
-        const i = arr.findIndex((b) => b.id === op.blockId);
-        if (i < 0 || !eqText(arr[i].text.split('\n', 1)[0] ?? '', op.first))
-          throw new Error(`applyOps: op ${op.id} 校验失败（blockId=${op.blockId}）`);
-        const blk = removeAt(arr, i);
-        blockLineMap(arr);
-        const line = dir === -1 ? op.from[0] : op.to;
-        insertAt(arr, anchorAt(arr, ops, k, dir === -1, line), blk);
+      case 'swap': {
+        // 自逆：定位两块交换位置（施加/恢复同形）；id 优先，首行文本+行号邻近兜底
+        const i = locateSwapBlock(arr, op.id, op.blockId, op.firstA, op.a);
+        const j = locateSwapBlock(arr, op.id, op.otherId ?? '', op.firstB, op.b);
+        if (i === j) throw new Error(`applyOps: op ${op.id} 校验失败（同块自换）`);
+        const tmp = arr[i];
+        arr[i] = arr[j];
+        arr[j] = tmp;
         blockLineMap(arr);
         break;
       }
@@ -209,7 +208,7 @@ function removeAt(arr: Block[], index: number): Block {
 const lineSpanAt = (arr: Block[], index: number): number =>
   arr[index + 1] ? Math.max(1, arr[index + 1].lineStart - arr[index].lineStart) : Math.max(1, arr[index].lineEnd - arr[index].lineStart + 1);
 
-/** reject：cur 精确回滚该 op（SPEC §2）。delete/move 按 base 序邻近幸存块落位，保留原块 gap/meta。
+/** reject：cur 精确回滚该 op（SPEC §2）。delete 按 base 序邻近幸存块落位，保留原块 gap/meta；swap 自逆再换。
  *  v1.2：撤回（withdraw）两阶段的第二击走这里；旧的 accept 语义已随「隐藏/撤回」生命周期移除。 */
 export function rejectOp(base: Block[], cur: Block[], op: Op): Block[] {
   const arr = cur.map((b) => ({ ...b }));
@@ -239,14 +238,28 @@ export function rejectOp(base: Block[], cur: Block[], op: Op): Block[] {
       }
       return arr;
     }
-    case 'move': {
-      const i = arr.findIndex((b) => b.id === op.blockId);
-      if (i < 0) throw new Error(`rejectOp: op ${op.id} 校验失败（blockId=${op.blockId}）`);
-      const [blk] = arr.splice(i, 1);
-      arr.splice(baseOrderIndex(base, arr, op.blockId, op.from[0]), 0, blk);
+    case 'swap': {
+      // 撤回 = 再换一次（自逆）
+      const i = locateSwapBlock(arr, op.id, op.blockId, op.firstA, op.a);
+      const j = locateSwapBlock(arr, op.id, op.otherId ?? '', op.firstB, op.b);
+      if (i === j) throw new Error(`rejectOp: op ${op.id} 校验失败（同块自换）`);
+      const tmp = arr[i];
+      arr[i] = arr[j];
+      arr[j] = tmp;
       return arr;
     }
   }
+}
+
+/** swap 定位：id+首行文本精确命中优先；否则行号邻近的首行匹配。 */
+function locateSwapBlock(arr: Block[], opId: string, id: string, first: string, line?: number): number {
+  if (id) {
+    const byId = arr.findIndex((b) => b.id === id);
+    if (byId >= 0 && eqText(arr[byId].text.split('\n', 1)[0] ?? '', first)) return byId;
+  }
+  const best = bestMatch(arr, first, line, true);
+  if (best >= 0) return best;
+  throw new Error(`locateSwapBlock: op ${opId} 校验失败：目标块不存在`);
 }
 
 /** 恢复/导入：parsed ops（blockId ''）按「行号邻近+文本匹配」重绑到当前块（SPEC §2）。
@@ -260,10 +273,11 @@ export function rebindOps(blocks: Block[], ops: Op[]): Op[] {
         if (i < 0) throw new Error(`rebindOps: op ${op.id} 找不到目标文本`);
         return { ...op, blockId: blocks[i].id };
       }
-      case 'move': {
-        const i = bestMatch(blocks, op.first, op.to, true);
-        if (i < 0) throw new Error(`rebindOps: op ${op.id} 找不到目标文本`);
-        return { ...op, blockId: blocks[i].id };
+      case 'swap': {
+        const i = bestMatch(blocks, op.firstA, op.a, true);
+        const j = bestMatch(blocks, op.firstB, op.b, true);
+        if (i < 0 || j < 0) throw new Error(`rebindOps: op ${op.id} 找不到目标文本`);
+        return { ...op, blockId: blocks[i].id, otherId: blocks[j].id };
       }
       case 'note': {
         const line = op.line;

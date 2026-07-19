@@ -46,12 +46,18 @@ interface OpBase {
   seq?: number; // 诞生序号（v1.3 导出 id 稳定化：跨导出不变 → Agent 端缓存命中）；会话内分配
 }
 
+/** note 的三型（协议 2.0）：request=修改命令（请 Agent 执行）；suggest=修改建议（Agent 定夺）；
+ *  discuss=希望讨论（勿改文本）。缺省 request。 */
+export type NoteKind = 'request' | 'suggest' | 'discuss';
+
 export type Op =
   | (OpBase & { type: 'replace'; before: string; after: string; patch?: { del: string; ins: string }[]; afterHash?: string })
   | (OpBase & { type: 'insert'; after: string })
   | (OpBase & { type: 'delete'; before: string })
-  | (OpBase & { type: 'move'; first: string; from: [number, number]; to: number })
-  | (OpBase & { type: 'note'; note: string; quote?: string }); // B 类：文本不动；quote = 行内选段原文（v1.3）
+  // swap（协议 2.0，替代 move）：a<b 为记录时行号；blockId=现居 a 的块，otherId=现居 b 的块；
+  // firstA/firstB=两块首行文本（恢复重绑校验）。自逆：施加/撤回都是再换一次。diff 不产生 swap，仅显式命令。
+  | (OpBase & { type: 'swap'; a: number; b: number; firstA: string; firstB: string; otherId?: string })
+  | (OpBase & { type: 'note'; note: string; quote?: string; kind?: NoteKind }); // 文本不动；quote = 行内选段原文（v1.3）
 
 export interface DocState {
   file: { name: string; kind: 'md' | 'jsonl' | 'xml' };

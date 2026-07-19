@@ -4,7 +4,7 @@
 //                  撤回两阶段：withdrawing（预令，可取消）→ withdrawn（墓碑，C 类，可复活，上限 50）。
 // diff op 的 hidden/withdrawing 存 flags（op 对象每次 commit 重建）；人工 op 存对象自身。
 // 按键路径只做 ops/行号重算；哈希+Prompt 渲染在 800ms 防抖通道内异步完成（SPEC §2）。
-import { parseDoc, serializeBlocks, blockLineMap, type Block, type Op, type DocState, type DocKind } from './ir';
+import { parseDoc, serializeBlocks, blockLineMap, type Block, type Op, type DocState, type DocKind, type NoteKind } from './ir';
 import { diffBlocks, rejectOp, rebindOps, applyOps, nowHM } from './changes';
 import { renderPrompt, parsePrompt, planPatch, applyPatch } from './promptmd';
 import { indentWrite } from './indent';
@@ -18,9 +18,9 @@ export type Action =
   | { type: 'new' }
   | { type: 'persistPrompt' } // load 配对决策完成后显式启动 Prompt 写入
   | { type: 'patchCur'; cur: Block[] }
-  | { type: 'addNote'; blockId: string; note: string; quote?: string }
-  | { type: 'editNote'; id: string; note: string; quote?: string } // 改批注文字（可一并改选段，v1.3 批注打磨）
-  | { type: 'recordMove'; blockId: string; first: string; from: [number, number]; to: number }
+  | { type: 'addNote'; blockId: string; note: string; quote?: string; kind?: NoteKind }
+  | { type: 'editNote'; id: string; note: string; quote?: string; kind?: NoteKind } // 改批注文字（可一并改选段/类型）
+  | { type: 'recordSwap'; blockId: string; otherId: string; a: number; b: number; firstA: string; firstB: string } // 调换（协议 2.0，替代 move）
   | { type: 'hide'; id: string } // 隐藏：卡片收起，文本与导出照旧
   | { type: 'unhide'; id: string }
   | { type: 'withdraw'; id: string } // 撤回第一击：进入预令（文档内预览删除线）
@@ -91,7 +91,7 @@ function commit(persistPrompt = true): void {
   const d = doc;
   if (!d) return;
   blockLineMap(d.cur);
-  manual = manual.filter((o) => o.type !== 'move' || moveAlive(o, d.cur)); // 失效 move 自动销账（SPEC §2）
+  manual = manual.filter((o) => o.type !== 'swap' || swapAlive(o, d.cur)); // 失效 swap 自动销账（被撤销还原即失效）
   const pos = new Map(d.cur.map((b) => [b.id, b.lineStart] as const));
   const posBase = new Map(d.base.map((b) => [b.id, b.lineStart] as const));
   const lineOf = (o: Op): number => pos.get(o.blockId) ?? posBase.get(o.blockId) ?? 0;
@@ -119,7 +119,7 @@ function commit(persistPrompt = true): void {
 }
 
 /** 组装 Prompt.md 文本（base 哈希按数组引用缓存）。copy=true 时省略 C 类（回传 Agent 版本）。
- *  导出 id = 类字母 + 诞生序号（跨导出稳定）；replace 够省走 patch 形（after-hash 同步短哈希）。 */
+ *  导出 n = op.seq（诞生序号，跨导出稳定 → Agent 缓存命中）；replace 够省走 patch 形（alter-hash 同步短哈希）。 */
 export async function buildPrompt(d: DocState, copy = false): Promise<string> {
   let bh = baseHashCache.get(d.base);
   if (!bh) {
@@ -134,8 +134,7 @@ export async function buildPrompt(d: DocState, copy = false): Promise<string> {
     { docHash: await hashText(exportText(d.cur, d.file.kind)), baseHash: await bh },
     {
       includeWithdrawn: !copy,
-      indentHint: indentWriteFlag && d.file.kind === 'md',
-      ids: (op) => `${op.type === 'note' ? 'B' : 'A'}${op.seq}`, // seq 由 commit 保证分配；缺失宁可显形不静默撞 A0
+      formats: indentWriteFlag && d.file.kind === 'md' ? ['中文首行缩进两字符'] : [],
       patchHashes,
     },
   );
@@ -151,10 +150,11 @@ async function writePromptDebounced(d: DocState, target: fs.PromptTarget, seq: n
   }
 }
 
-/** move 存活校验：块仍在 cur 且已不在原行（撤销回到原行 → 销账）。 */
-function moveAlive(o: Extract<Op, { type: 'move' }>, cur: Block[]): boolean {
-  const b = cur.find((x) => x.id === o.blockId);
-  return !!b && b.lineStart !== o.from[0];
+/** swap 存活校验：记录时 blockId 居 a（小行号）侧，换后序为 blockId 在 otherId 前；撤销还原原序即销账。 */
+function swapAlive(o: Extract<Op, { type: 'swap' }>, cur: Block[]): boolean {
+  const x = cur.findIndex((b) => b.id === o.blockId);
+  const y = cur.findIndex((b) => b.id === o.otherId);
+  return x >= 0 && y >= 0 && x < y;
 }
 
 /** 恢复编排（SPEC §2）：parse → patch 形展开 → 活跃 op 重绑 → 逆序取反重建 base；墓碑直通。 */
@@ -235,32 +235,26 @@ export const store: Store = {
     }
     if (a.type === 'new' || a.type === 'load') {
       const ops = a.type === 'load' ? (a.ops ?? []) : [];
-      manual = ops.filter((o) => o.state !== 'withdrawn' && (o.type === 'note' || o.type === 'move'));
+      manual = ops.filter((o) => o.state !== 'withdrawn' && (o.type === 'note' || o.type === 'swap'));
       withdrawn = ops.filter((o) => o.state === 'withdrawn').slice(-WITHDRAWN_CAP);
       flags = new Map();
       seqs = new Map();
-      // seq 计数器按文件最大编号续（恢复后新 op 不撞既有导出 id）
-      const maxSeq = ops.reduce((m, o) => {
-        const n = /\d+/.exec(o.id);
-        return n ? Math.max(m, Number(n[0])) : m;
-      }, 0);
+      // seq 计数器按文件最大编号续（恢复后新 op 不撞既有导出 n；解析端已把 n 写进 op.seq）
+      const maxSeq = ops.reduce((m, o) => Math.max(m, o.seq ?? 0), 0);
       diffSeq = maxSeq;
       opSeq = maxSeq;
       // hidden 的 diff op 跨会话播种：确定性 id 与 diffBlocks 输出一致，commit 重算后即复活（M1）
-      // seq 同步播种：导出 id 跨会话不漂移（v1.3 稳定编号的恢复半边，E2E 抓到）
+      // seq 同步播种：导出 n 跨会话不漂移（稳定编号的恢复半边，E2E 抓到）
       for (const o of ops) {
         // delete 的 blockId 恢复时为 ''（靠 line 落位）：按 before 文本补绑，否则 hidden 播种键永不命中（M5）
         if (o.type === 'delete' && !o.blockId && a.type === 'load' && a.base) {
           const bb = a.base.find((x) => x.text === o.before);
           if (bb) o.blockId = bb.id;
         }
-        const n = /\d+/.exec(o.id);
-        if (o.state === 'hidden' && o.type !== 'note' && o.type !== 'move')
+        if (o.state === 'hidden' && o.type !== 'note' && o.type !== 'swap')
           flags.set(`a:${o.blockId}:${o.type}`, 'hidden');
-        if (n && o.blockId && o.state !== 'withdrawn') {
-          if (o.type === 'note' || o.type === 'move') o.seq = Number(n[0]);
-          else seqs.set(`a:${o.blockId}:${o.type}`, Number(n[0]));
-        }
+        if (o.seq !== undefined && o.blockId && o.state !== 'withdrawn' && o.type !== 'note' && o.type !== 'swap')
+          seqs.set(`a:${o.blockId}:${o.type}`, o.seq);
       }
       doc =
         a.type === 'load'
@@ -276,7 +270,16 @@ export const store: Store = {
         break;
       case 'addNote': {
         const b = doc.cur.find((x) => x.id === a.blockId);
-        manual.push({ id: nid(), type: 'note', blockId: a.blockId, note: a.note, time: nowHM(), line: b?.lineStart, ...(a.quote ? { quote: a.quote } : {}) });
+        manual.push({
+          id: nid(),
+          type: 'note',
+          blockId: a.blockId,
+          note: a.note,
+          time: nowHM(),
+          line: b?.lineStart,
+          ...(a.quote ? { quote: a.quote } : {}),
+          ...(a.kind ? { kind: a.kind } : {}),
+        });
         break;
       }
       case 'editNote': {
@@ -285,11 +288,22 @@ export const store: Store = {
         const n = m as Extract<Op, { type: 'note' }>;
         n.note = a.note;
         if (a.quote !== undefined) n.quote = a.quote; // 新选区重进：选段一并更新（评审 m2）
+        if (a.kind !== undefined) n.kind = a.kind; // 类型可切换（request/suggest/discuss）
         break;
       }
-      case 'recordMove': {
-        const b = doc.cur.find((x) => x.id === a.blockId);
-        manual.push({ id: nid(), type: 'move', blockId: a.blockId, first: a.first, from: a.from, to: a.to, time: nowHM(), line: b?.lineStart });
+      case 'recordSwap': {
+        manual.push({
+          id: nid(),
+          type: 'swap',
+          blockId: a.blockId,
+          otherId: a.otherId,
+          a: a.a,
+          b: a.b,
+          firstA: a.firstA,
+          firstB: a.firstB,
+          time: nowHM(),
+          line: Math.min(a.a, a.b),
+        });
         break;
       }
       case 'hide':
@@ -342,14 +356,18 @@ export const store: Store = {
               op = { ...op, blockId: b.id };
             }
             manual.push({ ...op, id: nid() });
-          } else if (op.type === 'move') {
-            if (!op.blockId) {
-              const b = doc.cur.find((x) => x.text.split('\n', 1)[0] === (op as Extract<Op, { type: 'move' }>).first);
-              if (!b) return;
-              op = { ...op, blockId: b.id };
+          } else if (op.type === 'swap') {
+            // 导入墓碑（blockId ''）：先按首行文本+行号重绑两块，再自逆重放（复活 = 再换一次）
+            let o2 = op;
+            if (!o2.blockId || !o2.otherId) {
+              try {
+                o2 = rebindOps(doc.cur, [o2])[0] as typeof op;
+              } catch {
+                return;
+              }
             }
-            doc.cur = applyOps(doc.cur, [op], 1); // 先移块，再补登记（moveAlive 才不销账）
-            manual.push({ ...op, id: nid() });
+            doc.cur = applyOps(doc.cur, [o2], 1);
+            manual.push({ ...o2, id: nid() });
           } else {
             // 导入 insert 墓碑（blockId ''）：复活前补发会话 id，防重建块空 id 撞账
             if (op.type === 'insert' && !op.blockId) op = { ...op, blockId: nid() };

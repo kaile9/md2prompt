@@ -1,13 +1,16 @@
 /** §4.2 通用块浮层：文本域 + 预览槽 + 保存/取消。消费者：mermaid / math / xmlcard / html-img。
  *  另提供 openPopover（脚注定义等轻量弹窗）与 registerCloser（records.ts 自建模态复用单例语义）。 */
+import type { NoteKind } from '../core/ir';
 import { S } from '../ui/strings';
 
 export interface FloaterOptions {
   title: string;
   source: string;
   lang?: string;
+  /** 批注三型选择器（协议 2.0）：存在才渲染；onSave 第二参回传选中型。 */
+  kinds?: { current: NoteKind };
   renderPreview(el: HTMLElement, src: string): void;
-  onSave(next: string): void;
+  onSave(next: string, kind?: NoteKind): void;
 }
 
 /** DOM 契约：浮层挂载点 #floater、弹窗 #popover（§5）；缺失时兜底自建。 */
@@ -79,7 +82,33 @@ export function openFloater(opts: FloaterOptions): void {
   cancel.textContent = S.cancel;
   bar.append(save, cancel);
 
-  modal.append(head, textarea, preview, bar);
+  // 批注三型（request/suggest/discuss）：选中型随 onSave 回传
+  let kindSel: HTMLElement | null = null;
+  let curKind: NoteKind = opts.kinds?.current ?? 'request';
+  if (opts.kinds) {
+    kindSel = document.createElement('div');
+    kindSel.className = 'note-kinds';
+    const kinds: [NoteKind, string][] = [
+      ['request', S.noteKindRequest],
+      ['suggest', S.noteKindSuggest],
+      ['discuss', S.noteKindDiscuss],
+    ];
+    for (const [k, label] of kinds) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'mini-btn';
+      b.textContent = label;
+      b.title = S.noteKindTips[k];
+      b.classList.toggle('on', k === curKind);
+      b.addEventListener('click', () => {
+        curKind = k;
+        kindSel!.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      });
+      kindSel.appendChild(b);
+    }
+  }
+
+  modal.append(head, ...(kindSel ? [kindSel] : []), textarea, preview, bar);
   backdrop.appendChild(modal);
   root.appendChild(backdrop);
 
@@ -113,7 +142,7 @@ export function openFloater(opts: FloaterOptions): void {
   save.addEventListener('click', () => {
     const next = textarea.value;
     close();
-    opts.onSave(next);
+    opts.onSave(next, curKind);
   });
   cancel.addEventListener('click', close);
   // 仅当按下就发生在背板上才关（文本域内拖选、背板松手不误关）

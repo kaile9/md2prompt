@@ -32,8 +32,8 @@ function opAnchor(op: Op): string {
       return firstLine(op.after);
     case 'delete':
       return firstLine(op.before);
-    case 'move':
-      return op.first;
+    case 'swap':
+      return `${firstLine(op.firstA)} ⇄ ${firstLine(op.firstB)}`;
     case 'note':
       return op.note;
   }
@@ -43,14 +43,14 @@ const OP_ICON: Record<Op['type'], string> = {
   replace: S.opReplace,
   insert: S.opInsert,
   delete: S.opDelete,
-  move: S.opMove,
+  swap: S.opSwap,
   note: S.opNote,
 };
 
-/** 行锚一律取活值：cur 优先、base 兜底；move 的 op.to 仅作块不在时的回退。 */
+/** 行锚一律取活值：cur 优先、base 兜底。 */
 function opLine(state: DocState, op: Op): number | null {
   const b = state.cur.find(x => x.id === op.blockId) ?? state.base.find(x => x.id === op.blockId);
-  return b?.lineStart ?? (op.type === 'move' ? op.to : null);
+  return b?.lineStart ?? null;
 }
 
 /** 跳转：blockId 为主锚，行号兜底（main 监听此事件落位）。 */

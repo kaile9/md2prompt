@@ -10,6 +10,7 @@ import { mountToolbar, showSelection } from './ui/toolbar';
 import { SC_DEFAULT, comboOf, type ScAction } from './ui/shortcuts';
 import { parseDoc, serializeBlocks, type Block, type DocFile, type DocState } from './core/ir';
 import { withTombstones } from './core/changes';
+import { project } from './core/diffview';
 import { indentStrip } from './core/indent';
 import { buildPrompt, getLastAction, getSaveState, restoreFromPrompt, setIndentWrite, store } from './core/state';
 import * as fs from './core/fsio';
@@ -19,7 +20,7 @@ import { destroyEditor, mountEditor, moveBlock, peekText, runInline, scrollEdito
 import { destroySource, mountSource, peekSource, scrollSourceTo } from './editor/sourcemode';
 import { renderStatic, type ResolveImage } from './editor/static';
 import { mountVirtualList, openRecordEditor } from './editor/records';
-import { closeFloater, floatRoot, openFloater, registerCloser } from './editor/floater';
+import { closeFloater, floatRoot, openFloater, openPopover, registerCloser } from './editor/floater';
 
 /* ---------- 节切分（§4.1 阈值：300KB / 2000 行，h2 优先 h1 兜底） ---------- */
 
@@ -101,9 +102,10 @@ let sections: Section[] = [];
 let activeIdx = -1;
 let editingFile: DocState['file'] | null = null; // 编辑器当前承载的文档身份（flush 门禁）
 let unmountVirtual: (() => void) | null = null;
-let pendingMoves: { first: string; from: [number, number] }[] = []; // Alt+↑/↓ 队列，flush 时统一入账
+let pendingSwaps: { first: string; otherFirst: string }[] = []; // Alt+↑/↓ 调换队列（PM 现场首行纯文本对），flush 时逐步模拟入账为 swap
 let editorChangesPaused = false; // 文件/目录选择期间屏蔽旧编辑器的 200ms 尾回调
 let editorPauseGeneration = 0; // 重叠 open 只允许最后一次流程解除门禁
+let srcCursor = { line: 1, col: 1 }; // 源码/分屏的 CM 光标（行列显示与调换锚点共用）
 /** 视图模式：渲染（默认主战场）/ 源码 / 分屏对比（左源码右实时渲染预览）。 */
 let viewMode: 'render' | 'source' | 'split' = 'render';
 
@@ -118,34 +120,65 @@ const docEl = (): HTMLElement => {
   return el;
 };
 
+/** PM 现场首行纯文本 → 匹配块：块首行（代码块跳过围栏行）经 project 投影后比对。 */
+const plainFirstOf = (b: Block): string => {
+  const lines = b.text.split('\n');
+  const fl = lines[0] ?? '';
+  const src = /^(`{3,}|~{3,})/.test(fl) ? (lines[1] ?? fl) : fl;
+  return project(src).plain;
+};
+
+/** Alt+↑/↓ 队列 → swap 对：在 flush 前旧序上逐步模拟（连发移动每步邻居不同，合并会记错账）。
+ *  消歧靠相邻约束：被移块与对调块在模拟序中必须相邻；对不上宁可不记（幻影 swap 会毁恢复账）。
+ *  已知边界：XML 卡（多块并一节点的区域）被 Alt 移动时只记到区域首块，恢复近似（SPEC §9 备案）。 */
+function resolvePendingSwaps(preCur: Block[]): { uid: string; lid: string }[] {
+  const sim = [...preCur];
+  const pairs: { uid: string; lid: string }[] = [];
+  for (const { first, otherFirst } of pendingSwaps) {
+    let found: { i: number; j: number } | undefined;
+    for (let i = 0; i < sim.length && !found; i++) {
+      if (plainFirstOf(sim[i]) !== first) continue;
+      for (const j of [i - 1, i + 1])
+        if (j >= 0 && j < sim.length && plainFirstOf(sim[j]) === otherFirst) {
+          found = { i, j };
+          break;
+        }
+    }
+    if (!found) continue;
+    const { i, j } = found;
+    [sim[i], sim[j]] = [sim[j], sim[i]];
+    pairs.push({ uid: sim[Math.min(i, j)].id, lid: sim[Math.max(i, j)].id }); // 记录时居 a 侧者在前
+  }
+  pendingSwaps = [];
+  return pairs;
+}
+
 /** flush 文本入账：以「捕获时的旧边界」切换（编辑期内块数可变，边界以 PM 现场为准）。 */
 function applySectionText(idx: number, text: string): void {
   const st = store.state;
   const prev = sections[idx];
   if (!st || !prev) return;
+  const preCur = st.cur; // flush 前旧序（swap 模拟起点）
   const old = st.cur.slice(prev.start, prev.end);
   const next = reparseSection(text, old);
   if (next.length && old.length) next[0] = { ...next[0], gap: old[0].gap }; // 首块 gap 归还原位
   store.dispatch({ type: 'patchCur', cur: [...st.cur.slice(0, prev.start), ...next, ...st.cur.slice(prev.end)] });
-  if (pendingMoves.length) {
-    // 防抖窗内连发移动按块合并：同 first 只记一笔（取首条 from；to 以 flush 后现行位置为准，M2）
-    const merged = new Map<string, { first: string; from: [number, number] }>();
-    for (const mv of pendingMoves) if (!merged.has(mv.first)) merged.set(mv.first, mv);
-    pendingMoves = [];
+  if (pendingSwaps.length) {
+    const pairs = resolvePendingSwaps(preCur);
     const st2 = store.state;
-    for (const mv of merged.values()) {
-      // 就近消歧：同首行文本者取离 from 最近（移回原位的由 moveAlive 自然销账）
-      let best: Block | undefined;
-      let dist = Infinity;
-      for (const b of st2?.cur ?? []) {
-        if (b.text.split('\n', 1)[0] !== mv.first) continue;
-        const d = Math.abs(b.lineStart - mv.from[0]);
-        if (d < dist) {
-          best = b;
-          dist = d;
-        }
-      }
-      if (st2 && best) store.dispatch({ type: 'recordMove', blockId: best.id, first: mv.first, from: mv.from, to: best.lineStart });
+    for (const { uid, lid } of pairs) {
+      const U = st2?.cur.find((b) => b.id === uid);
+      const L = st2?.cur.find((b) => b.id === lid);
+      if (!U || !L) continue;
+      store.dispatch({
+        type: 'recordSwap',
+        blockId: U.id,
+        otherId: L.id,
+        a: U.lineStart,
+        b: L.lineStart,
+        firstA: U.text.split('\n', 1)[0] ?? '',
+        firstB: L.text.split('\n', 1)[0] ?? '',
+      });
     }
   }
 }
@@ -182,14 +215,15 @@ function annotateFlow(blockIndex: number, quote?: string): void {
   openFloater({
     title: `${S.annotate} · ${S.lineLabel(b.lineStart)}`,
     source: existing?.note ?? '',
+    kinds: { current: existing?.type === 'note' ? (existing.kind ?? 'request') : 'request' },
     renderPreview: (el) => {
       el.textContent = quote ?? (existing?.type === 'note' ? existing.quote : undefined) ?? '';
     },
-    onSave: (text) => {
+    onSave: (text, kind) => {
       const note = text.trim();
       if (!note) return;
-      if (existing) store.dispatch({ type: 'editNote', id: existing.id, note, ...(quote !== undefined ? { quote } : {}) });
-      else store.dispatch({ type: 'addNote', blockId: b.id, note, ...(quote ? { quote } : {}) });
+      if (existing) store.dispatch({ type: 'editNote', id: existing.id, note, kind, ...(quote !== undefined ? { quote } : {}) });
+      else store.dispatch({ type: 'addNote', blockId: b.id, note, kind, ...(quote ? { quote } : {}) });
     },
   });
 }
@@ -200,6 +234,69 @@ function restructurePaint(): void {
   sections = splitSections(store.state?.cur ?? []);
   const idx = Math.max(0, sections.findIndex((s) => s.startId === startId));
   paintSections(idx);
+}
+
+/* ---------- 调换（协议 2.0 swap 显式命令：state 层重排，渲染/源码通吃） ---------- */
+
+/** 当前块（调换起点）：渲染模式取 PM 光标顶层块；源码/分屏取 CM 光标行所在块。 */
+function currentBlockRef(): Block | undefined {
+  const st = store.state;
+  const s = sections[activeIdx];
+  if (!st || !s) return undefined;
+  if (viewMode === 'render') return st.cur[s.start + currentBlockIndex()];
+  const ln = (st.cur[s.start]?.lineStart ?? 1) + srcCursor.line - 1;
+  return st.cur.slice(s.start, s.end).find((b) => b.lineStart <= ln && ln <= b.lineEnd);
+}
+
+function swapFlow(anchor: HTMLElement): void {
+  const st = store.state;
+  if (!st || st.file.kind !== 'md') return;
+  flushEditor(false); // 非破坏预 flush：行号与块序以最新 cur 为准
+  const curBlock = currentBlockRef();
+  if (!curBlock) return;
+  openPopover(anchor, (body) => {
+    const input = document.createElement('input');
+    input.className = 'txt';
+    input.placeholder = S.swapLinePh;
+    input.style.width = '13rem';
+    body.appendChild(input);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      const ln = Number(input.value.trim());
+      if (Number.isInteger(ln)) doSwap(curBlock.id, ln);
+      body.parentElement?.replaceChildren();
+      document.dispatchEvent(new MouseEvent('mousedown'));
+    });
+    input.focus();
+  });
+}
+
+/** 执行调换并记录 swap：cur 重排（gap 随块走，自逆一致）→ recordSwap → 编辑器以 cur 为准重载。 */
+function doSwap(currentId: string, targetLine: number): void {
+  const st = store.state;
+  if (!st) return;
+  const ia = st.cur.findIndex((b) => b.id === currentId);
+  const ib = st.cur.findIndex((b) => b.lineStart <= targetLine && targetLine <= b.lineEnd);
+  if (ia < 0 || ib < 0 || ia === ib) return;
+  const lo = Math.min(ia, ib);
+  const hi = Math.max(ia, ib);
+  const next = [...st.cur];
+  [next[lo], next[hi]] = [next[hi], next[lo]];
+  store.dispatch({ type: 'patchCur', cur: next });
+  const st2 = store.state;
+  const U = st2?.cur[lo];
+  const L = st2?.cur[hi];
+  if (!U || !L) return;
+  store.dispatch({
+    type: 'recordSwap',
+    blockId: U.id,
+    otherId: L.id,
+    a: U.lineStart,
+    b: L.lineStart,
+    firstA: U.text.split('\n', 1)[0] ?? '',
+    firstB: L.text.split('\n', 1)[0] ?? '',
+  });
+  restructure(false); // cur 已为准（同撤回/复活语义）
 }
 
 /* ---------- 选区浮卡与工具轨（批次 4；annotateFlow 承接批注） ---------- */
@@ -213,12 +310,13 @@ document.addEventListener('md2p-edit-note', (ev) => {
   openFloater({
     title: `${S.annotate} · ${op.line ? S.lineLabel(op.line) : ''}`,
     source: op.note,
+    kinds: { current: op.kind ?? 'request' },
     renderPreview: (el) => {
       el.textContent = op.quote ?? '';
     },
-    onSave: (text) => {
+    onSave: (text, kind) => {
       const note = text.trim();
-      if (note) store.dispatch({ type: 'editNote', id: op.id, note });
+      if (note) store.dispatch({ type: 'editNote', id: op.id, note, kind });
     },
   });
 });
@@ -227,12 +325,9 @@ const editorHooks: EditorHooks = {
   onChange: (text) => {
     if (!editorChangesPaused) applySectionText(activeIdx, text);
   },
-  onMoveBlock: (_dir, _idx, first) => {
-    const st = store.state;
-    if (!st || !first) return;
-    const b = st.cur.find((x) => x.text.split('\n', 1)[0] === first);
-    if (!b) return; // 找不到块不入账（防 from="0-0" 幻影 move）
-    pendingMoves.push({ first, from: [b.lineStart, b.lineEnd] });
+  onMoveBlock: (_dir, _idx, first, otherFirst) => {
+    if (!first || !otherFirst) return; // 首行缺失（atom 等）：宁可不记（幻影 swap 毁恢复账）
+    pendingSwaps.push({ first, otherFirst });
   },
   onAnnotate: (blockIndex, quote) => annotateFlow(blockIndex, quote),
   onSelectText: (text, at) => {
@@ -308,6 +403,7 @@ function activateInto(sec: HTMLElement, idx: number): void {
       if (!editorChangesPaused) applySectionText(activeIdx, text);
     },
     onCursor: (line: number, col: number) => {
+      srcCursor = { line, col };
       cursorEl.textContent = S.cursorPos((st.cur[s.start]?.lineStart ?? 1) + line - 1, col);
     },
   };
@@ -744,7 +840,7 @@ applyPrefs();
 mountSettings();
 mountPanels(store);
 mountProgress();
-mountToolbar({ annotate: () => annotateFlow(currentBlockIndex(), fabQuote ?? undefined) });
+mountToolbar({ annotate: () => annotateFlow(currentBlockIndex(), fabQuote ?? undefined), swap: (anchor) => swapFlow(anchor) });
 syncRail(store.state); // 初始无文档即隐藏工具轨
 setProgressMode(currentPrefs().progress);
 setIndentWrite(currentPrefs().indent === 'write'); // 首行缩进·写入文档：启动同步 + 设置变更同步

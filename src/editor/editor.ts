@@ -41,8 +41,8 @@ const commonmarkFaithful = presetCommonmark.commonmark.filter((p) => p !== remar
 export interface EditorHooks {
   /** flush 当前节文本 → cur（防抖 200ms 后回调；切节时以 destroyEditor 返回值兜底）。 */
   onChange(sectionSource: string): void;
-  /** Alt+↑/↓ 显式移动命令已发生；blockIndex = 移动后顶层块序号，first = 被移动块首行文本（PM 现场值）。 */
-  onMoveBlock(dir: 1 | -1, blockIndex?: number, first?: string): void;
+  /** Alt+↑/↓ 显式调换已发生；first/firstOther = 被移动块与对调块的 PM 现场首行纯文本。 */
+  onMoveBlock(dir: 1 | -1, blockIndex?: number, first?: string, otherFirst?: string): void;
   /** 批注入口（Alt+M 或点击批注钉）；blockIndex = 顶层块序号，quote = 行内选段原文（无选区则缺省）。 */
   onAnnotate?(blockIndex: number, quote?: string): void;
   /** 选区变化：有非空选区时给纯文本与锚点坐标（批注浮钮用）；收起时给 null。 */
@@ -250,8 +250,8 @@ function buildDecorations(doc: PMNode, rev: RevState): DecorationSet {
           decos.push(
             Decoration.node(pos, pos + node.nodeSize, { class: op.state === 'withdrawing' ? 'rev-will' : 'rev-ins' }),
           );
-        else if (op.type === 'move')
-          decos.push(Decoration.widget(pos + 1, widget('span', 'rev-moved', S.opMove), { side: -1, key: `mv-${op.id}` }));
+        else if (op.type === 'swap')
+          decos.push(Decoration.widget(pos + 1, widget('span', 'rev-moved', S.opSwap), { side: -1, key: `sw-${op.id}` }));
         else if (op.type === 'note') {
           // 行内批注：选段加虚线下划线（quote 可能含行内标记，投影后定位）
           if (op.quote) {
@@ -571,5 +571,5 @@ export function moveBlock(dir: 1 | -1): void {
   const newPos = dir === 1 ? pos + other.nodeSize : pos - other.nodeSize;
   tr.setSelection(Selection.near(tr.doc.resolve(newPos + 1)));
   view.dispatch(tr.scrollIntoView());
-  currentHooks?.onMoveBlock(dir, target, cur.textContent.split('\n', 1)[0] ?? '');
+  currentHooks?.onMoveBlock(dir, target, cur.textContent.split('\n', 1)[0] ?? '', other.textContent.split('\n', 1)[0] ?? '');
 }

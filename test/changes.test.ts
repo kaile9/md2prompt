@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyOps, diffBlocks } from '../src/core/changes';
+import { applyOps, diffBlocks, rebindOps } from '../src/core/changes';
 import { blockLineMap, serializeBlocks, type Block, type Op } from '../src/core/ir';
 import { parsePrompt, renderPrompt } from '../src/core/promptmd';
 
@@ -131,10 +131,25 @@ describe('applyOps', () => {
     expect(applyOps(after, parsePrompt(prompt).ops, -1).map((b) => b.text)).toEqual(before.map((b) => b.text));
   });
 
-  test('move 逆放使用 from 锚点还原原位置', () => {
+  test('swap 自逆：dir=±1 同形，再换一次还原', () => {
     const before = mapped([B('a', 'A'), B('b', 'B'), B('c', 'C')]);
-    const moved = mapped([B('b', 'B'), B('a', 'A'), B('c', 'C')]);
-    const move: Op = { id: 'm1', type: 'move', blockId: 'a', first: 'A', from: [1, 1], to: 3, time: '12:00' };
-    expect(applyOps(moved, [move], -1).map((b) => b.text)).toEqual(before.map((b) => b.text));
+    const swapped = mapped([B('b', 'B'), B('a', 'A'), B('c', 'C')]);
+    // 记录时居 a（小行号）侧者为 blockId：swapped 状态下 b 在 line1、a 在 line3
+    const swap: Op = { id: 's1', type: 'swap', blockId: 'b', otherId: 'a', a: 1, b: 3, firstA: 'B', firstB: 'A', time: '12:00' };
+    expect(applyOps(swapped, [swap], -1).map((x) => x.text)).toEqual(['A', 'B', 'C']);
+    expect(applyOps(before, [swap], 1).map((x) => x.text)).toEqual(['B', 'A', 'C']);
+  });
+
+  test('swap 恢复重绑：blockId 空时按首行文本 + 行号邻近定位两块', () => {
+    const cur = mapped([B('b', 'B'), B('a', 'A'), B('c', 'C')]);
+    const parsed: Op = { id: 'n2', seq: 2, type: 'swap', blockId: '', a: 1, b: 3, firstA: 'B', firstB: 'A', time: '' };
+    const [bound] = rebindOps(cur, [parsed]);
+    expect(bound).toMatchObject({ type: 'swap', blockId: 'b', otherId: 'a' });
+  });
+
+  test('swap 定位失败抛带 op id 的错（首行文本对不上）', () => {
+    const cur = mapped([B('a', 'A'), B('b', 'B')]);
+    const swap: Op = { id: 's9', type: 'swap', blockId: 'a', otherId: 'b', a: 1, b: 3, firstA: '不存在', firstB: 'B', time: '' };
+    expect(() => applyOps(cur, [swap], 1)).toThrow(/s9/);
   });
 });

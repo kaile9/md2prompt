@@ -43,8 +43,16 @@ export const S = {
   opReplace: '改',
   opInsert: '增',
   opDelete: '删',
-  opMove: '移',
+  opSwap: '换',
   opNote: '注',
+  noteKindRequest: '命令',
+  noteKindSuggest: '建议',
+  noteKindDiscuss: '讨论',
+  noteKindTips: {
+    request: '修改命令：请 Agent 照做并返回改后文本',
+    suggest: '修改建议：由 Agent 定夺是否采纳',
+    discuss: '希望与 Agent 讨论此处问题（勿改文本）',
+  } as Record<string, string>,
 
   // 导出
   copyPrompt: '复制 Prompt',
@@ -168,6 +176,8 @@ export const S = {
   tbHr: '分割线',
   tbLink: '插入链接',
   tbImage: '插入图片',
+  tbSwap: '与第 N 行所在块调换',
+  swapLinePh: '目标行号（与该行所在块调换）',
   tb_bold: '加粗（选区）',
   tb_italic: '斜体（选区）',
   tb_strike: '删除线（选区）',
