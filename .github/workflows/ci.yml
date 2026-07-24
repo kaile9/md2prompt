@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: ['**']
+    tags: ['v*'] # release job 的前提：此前仅 branches 触发，tag 推送根本不启动工作流（v2.0.2 根修）
   pull_request:
 
 jobs:

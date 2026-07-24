@@ -26,7 +26,7 @@ E2E_TIMEOUT_MS=180000 node run.mjs   # 慢机器放宽单脚本超时（默认 1
 
 ## 为什么必须 node 不能 bun
 
-bun 1.3.14 实测（2026-07-23 本机，`bun smoke.mjs`）：chromium 进程起得来，但 playwright 的 CDP 管道连不上，`chromium.launch` 挂到 180s 超时。node（24）正常。所以套件入口 `package.json` 的 `test:e2e` 是 `node e2e/run.mjs`，e2e 一律用 node 跑。
+bun 实测始终卡在 CDP：chromium 进程起得来，playwright 的 CDP 管道连不上，`chromium.launch` 挂到 180s 超时（2026-07-23 bun 1.3.14 首测；2026-07-24 bun 1.4.0-canary.1 复测依旧）。node（24）正常。所以套件入口 `package.json` 的 `test:e2e` 是 `node e2e/run.mjs`，e2e 一律用 node 跑。
 
 ## run.mjs 失败判定（三者任一）
 
