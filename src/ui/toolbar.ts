@@ -78,7 +78,7 @@ export function mountToolbar(hooks: ToolbarHooks): void {
     });
     rail.appendChild(b);
   }
-  page.appendChild(rail);
+  document.body.appendChild(rail); // v2.0.2：改 fixed 直挂 body（迁出 #page 亮度滤镜域；位置由 main 的 syncRailLeft 同步）
   // 选区浮卡（滚屏/失焦即隐）
   card = document.createElement('div');
   card.id = 'sel-card';

@@ -182,7 +182,7 @@ export function renderPrompt(state: DocState, hashes: PromptHashes, opts: Render
       anchor = l === undefined ? '' : ` line="${l}"`;
     }
     // patch 形：够省且调用方给了 alter-hash 才换形
-    const hunks = op.type === 'replace' && !json && opts.patchHashes ? planPatch(op) : null;
+    const hunks = op.type === 'replace' && !json && opts.patchHashes?.has(op.id) ? planPatch(op) : null; // has 即 buildPrompt 已判 patch 形；表外 op 不再重算 planPatch（v2.0.2）
     const ah = hunks ? opts.patchHashes?.get(op.id) : undefined;
     if (op.type === 'replace' && hunks && ah) {
       const open = `<revise n="${n}"${anchor} form="patch"${st}>`;

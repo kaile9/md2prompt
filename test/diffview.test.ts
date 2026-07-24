@@ -106,6 +106,24 @@ describe('project（源文 → 纯文本坐标投影，M4）', () => {
     expect(project('算$x+1$式').plain).toBe('算\ufffc式');
   });
 
+  test('内词下划线按字面保留（snake_case；CommonMark `_` 内词不构成强调，v2.0.2 移植）', () => {
+    const { plain, map } = project('snake_case_name 变量');
+    expect(plain).toBe('snake_case_name 变量');
+    expect(map).toEqual([...Array(18).keys()]); // 无符号丢弃：投影与源文逐字对齐
+  });
+
+  test('未配对标记按字面保留（孤星号/孤反引号/孤波浪号）', () => {
+    expect(project('a * b 与孤立`反引号').plain).toBe('a * b 与孤立`反引号');
+    expect(project('波浪 ~ 单枚').plain).toBe('波浪 ~ 单枚');
+    expect(project('星号*只开不合').plain).toBe('星号*只开不合');
+  });
+
+  test('成对强调/行内码/删除线仍正确剥离', () => {
+    expect(project('说**重点**与`code`和~~删~~').plain).toBe('说重点与code和删');
+    expect(project('_斜体_ 保留').plain).toBe('斜体 保留');
+    expect(project('a*b*c').plain).toBe('abc'); // 内词星号成对仍是强调（* 无内词限制）
+  });
+
   test('含标记句子的句级 diff 可对上 PM 纯文本', () => {
     // M4 原案：after 引入 ** 标记时，投影两侧同规则，ins 段可在 PM 纯文本中定位
     const pb = project('他说道。');

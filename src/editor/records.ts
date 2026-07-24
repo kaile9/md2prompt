@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // editor/records.ts — JSONL 数据集模式（SPEC §4.3）：记录卡片、虚拟列表、记录浮层编辑器。
-import type { Block } from '../core/ir';
+import type { Block, NoteKind } from '../core/ir';
 import { S } from '../ui/strings';
 import { closeFloater, floatRoot, registerCloser, releaseCloser } from './floater';
 
@@ -112,8 +112,8 @@ const parseField = (k: string, v: string): unknown => {
   }
 };
 
-/** 记录浮层编辑器（§4.3）：表单（已知字段）/原始 JSON 两页签；保存前校验；可附 B 类批注。 */
-export function openRecordEditor(b: Block, onSave: (next: string) => void, onAnnotate: (note: string) => void): void {
+/** 记录浮层编辑器（§4.3）：表单（已知字段）/原始 JSON 两页签；保存前校验；可附 B 类批注（v2.0.2 起带三型选择）。 */
+export function openRecordEditor(b: Block, onSave: (next: string) => void, onAnnotate: (note: string, kind: NoteKind) => void): void {
   let obj: Dict | null = null;
   try {
     const j: unknown = JSON.parse(b.text);
@@ -169,6 +169,28 @@ export function openRecordEditor(b: Block, onSave: (next: string) => void, onAnn
   note.className = 'record-note';
   note.placeholder = S.recordNotePh;
 
+  // 批注三型选择器（v2.0.2，复用批注浮层 .note-kinds 样式与 S.noteKind* 文案）：记录批注原全缺省 request，补齐三档
+  let curKind: NoteKind = 'request';
+  const kindsRow = document.createElement('div');
+  kindsRow.className = 'note-kinds';
+  const KINDS: [NoteKind, string][] = [
+    ['request', S.noteKindRequest],
+    ['suggest', S.noteKindSuggest],
+    ['discuss', S.noteKindDiscuss],
+  ];
+  for (const [k, label] of KINDS) {
+    const c = document.createElement('button');
+    c.type = 'button';
+    c.className = `mini-btn kind-${k}${k === curKind ? ' on' : ''}`;
+    c.textContent = label;
+    c.title = S.noteKindTips[k];
+    c.addEventListener('click', () => {
+      curKind = k;
+      kindsRow.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === c));
+    });
+    kindsRow.appendChild(c);
+  }
+
   const err = document.createElement('div');
   err.className = 'record-error';
 
@@ -178,7 +200,7 @@ export function openRecordEditor(b: Block, onSave: (next: string) => void, onAnn
   const cancel = btn(S.cancel);
   bar.append(save, cancel);
 
-  modal.append(head, tabs, body, note, err, bar);
+  modal.append(head, tabs, body, kindsRow, note, err, bar);
   backdrop.appendChild(modal);
   root.appendChild(backdrop);
 
@@ -223,7 +245,7 @@ export function openRecordEditor(b: Block, onSave: (next: string) => void, onAnn
     const noteText = note.value.trim();
     close();
     onSave(JSON.stringify(out));
-    if (noteText) onAnnotate(noteText);
+    if (noteText) onAnnotate(noteText, curKind);
   });
   cancel.addEventListener('click', close);
 }

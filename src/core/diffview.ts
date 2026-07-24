@@ -41,11 +41,67 @@ function splitSentences(t: string): string[] {
 const seg = (type: DiffSeg['type'], text: string): DiffSeg => ({ type, text });
 
 /** 源文 → 纯文本坐标投影：PM 节点是纯文本+atom 占位符，源文含行内标记。
- *  atom 运行（图片/脚注引用/行内公式）折叠为单个占位符，链接 [t](u) → t，标记符号 * _ ` ~ 丢弃。
+ *  atom 运行（图片/脚注引用/行内公式）折叠为单个占位符，链接 [t](u) → t；
+ *  标记符按 CommonMark 左右-flanking 判开闭、能配对才剥离——未配对标记与内词下划线按字面保留
+ *  （snake_case、孤 * ` ~ 不再投影消失，v2.0.2 移植评审修复）。
  *  返回 plain（投影文本）与 map（plain 下标 → 源文下标），del 段经 map 回切源文展示。 */
 export function project(s: string): { plain: string; map: number[] } {
   const ATOM = /^(!\[[^\]]*\]\([^)]*\)|\[\^[^\]]+\]|\$[^$]+\$)/;
   const LINK = /^\[([^\]]*)\]\([^)]*\)/;
+  const isWs = (c: string): boolean => c === '' || /\s/.test(c);
+  const isPunct = (c: string): boolean => /\p{P}/u.test(c);
+
+  // 预扫标记运行段，判定开/闭侧位并配对；未配对段按字面保留
+  interface MarkRun { ch: string; at: number; len: number; open: boolean; close: boolean }
+  const runs: MarkRun[] = [];
+  for (let i = 0; i < s.length; ) {
+    const c = s[i];
+    if (c !== '*' && c !== '_' && c !== '`' && c !== '~') {
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < s.length && s[j] === c) j++;
+    const prev = i > 0 ? s[i - 1] : '';
+    const next = j < s.length ? s[j] : '';
+    const prevWs = isWs(prev);
+    const nextWs = isWs(next);
+    const prevP = isPunct(prev);
+    const nextP = isPunct(next);
+    const left = !nextWs && (!nextP || prevWs || prevP); // 左-flanking：可开
+    const right = !prevWs && (!prevP || nextWs || nextP); // 右-flanking：可闭
+    let open = left;
+    let close = right;
+    if (c === '_') {
+      // CommonMark 内词规则：`_` 两侧皆文字时既不开也不闭（snake_case 字面保留）
+      open = left && (!right || prevP);
+      close = right && (!left || nextP);
+    }
+    runs.push({ ch: c, at: i, len: j - i, open, close });
+    i = j;
+  }
+  const paired = new Set<number>();
+  const openers: number[] = [];
+  runs.forEach((r, k) => {
+    if (r.close) {
+      for (let q = openers.length - 1; q >= 0; q--) {
+        const o = runs[openers[q]];
+        if (o.ch === r.ch && (r.ch !== '`' || o.len === r.len)) {
+          paired.add(openers[q]);
+          paired.add(k);
+          openers.splice(q, 1);
+          break;
+        }
+      }
+    }
+    if (r.open && !paired.has(k)) openers.push(k);
+  });
+  const literal = new Set<number>(); // 按字面保留的源文下标
+  runs.forEach((r, k) => {
+    if (paired.has(k)) return;
+    for (let t = 0; t < r.len; t++) literal.add(r.at + t);
+  });
+
   const plain: string[] = [];
   const map: number[] = [];
   let i = 0;
@@ -69,6 +125,10 @@ export function project(s: string): { plain: string; map: number[] } {
     }
     const c = s[i];
     if (c === '*' || c === '_' || c === '`' || c === '~') {
+      if (literal.has(i)) {
+        plain.push(c);
+        map.push(i);
+      }
       i++;
       continue;
     }

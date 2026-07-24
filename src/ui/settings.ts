@@ -195,7 +195,7 @@ export function mountSettings(): void {
     ${(Object.keys(SC_LABEL) as ScAction[])
       .map(
         (a) =>
-          `<div class="set-row sc-row"><span class="set-label">${SC_LABEL[a]}</span><span class="set-ctl"><input class="txt sc-key" data-sc="${a}" readonly placeholder="${SC_DEFAULT[a]}"></span></div>`,
+          `<div class="set-row sc-row"><span class="set-label">${SC_LABEL[a]}</span><span class="set-ctl"><input class="txt sc-key" data-sc="${a}" readonly placeholder="${SC_DEFAULT[a]}"><span class="sc-warn" aria-live="polite"></span></span></div>`,
       )
       .join('')}
     <div class="set-row"><span class="set-label">${S.setFontCjk}</span><span class="set-ctl">
@@ -355,7 +355,19 @@ export function mountSettings(): void {
   backdrop.addEventListener('change', (ev) => onInput(ev)); // select/旧浏览器兜底
   backdrop.querySelectorAll<HTMLInputElement>('input.sc-key').forEach((el) => {
     el.addEventListener('keydown', (ev) => {
-      if (captureCombo(el, ev) !== null) onInput(); // 捕获到完整组合即保存
+      const combo = captureCombo(el, ev);
+      if (combo === null) return;
+      // 冲突检测（v2.0.2）：撞其它动作的现行组合 → 回滚输入框 + 即时提示，不予保存
+      const holder = [...backdrop.querySelectorAll<HTMLInputElement>('input.sc-key')]
+        .find((x) => x !== el && x.value === combo && combo !== '');
+      const warn = el.closest('.set-ctl')?.querySelector<HTMLElement>('.sc-warn');
+      if (holder) {
+        el.value = currentPrefs().shortcuts[el.dataset.sc as ScAction] ?? SC_DEFAULT[el.dataset.sc as ScAction];
+        if (warn) warn.textContent = S.scConflict(SC_LABEL[holder.dataset.sc as ScAction] ?? '');
+        return;
+      }
+      if (warn) warn.textContent = '';
+      onInput(); // 捕获到完整组合即保存
     });
   });
 
