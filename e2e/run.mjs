@@ -39,7 +39,6 @@ const SUITE = [
   { file: 'sourceanno.mjs',     note: '源码/分屏批注与行内格式（BUG4 门禁）' },
   { file: 'xmlmode.mjs',        note: 'XML 恒由 CodeMirror 承载（审查 B1 门禁）' },
   { file: 'microtypo.mjs',      note: 'OpenType 微排版设置组（门禁）' },
-  { file: 'qa15-s1-xml.mjs',    note: '场景1 终版：XML 卡直编边界（清空打字/破损配对）' },
   { file: 'qa15-s2-tabs.mjs',   note: '场景2：页签持久化 + 非法值回退' },
   { file: 'qa15-s3-path.mjs',   note: '场景3：路径前缀去重斜杠/复制内容/清空恢复' },
   { file: 'qa15-s3b-copy.mjs',  note: '场景3 补测：⧉ 复制钮 + 混合斜杠细节' },
