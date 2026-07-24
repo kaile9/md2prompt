@@ -33,12 +33,7 @@ jobs:
       - run: bun run build
       - run: cd e2e && bun install --frozen-lockfile
       - run: npx playwright install --with-deps chromium
-      - run: |
-          cd e2e
-          for g in life v13 note srcmode export look measure splitalign sourceanno xmlmode; do
-            echo "=== $g ==="
-            node "$g.mjs"
-          done
+      - run: cd e2e && node run.mjs
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

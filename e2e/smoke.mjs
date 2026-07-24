@@ -7,3 +7,4 @@ await p.waitForTimeout(1200);
 const ok = await p.evaluate(() => !!window.__md2p?.store);
 console.log('hook:', ok, '| title:', await p.title());
 await b.close();
+process.exit(ok ? 0 : 1);

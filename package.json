@@ -1,6 +1,6 @@
 {
   "name": "2youg1-md2prompt",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "本地单文件 HTML 的 Markdown/JSONL 修改器：编辑即留痕，一键导出协议精确的 Prompt.md 回传 AI",
   "license": "MPL-2.0",
   "author": "2youg1 (https://github.com/kaile9)",
@@ -23,6 +23,7 @@
     "dev": "vite",
     "build": "vite build && bun -e \"require('fs').copyFileSync('dist/index.html','dist/2youg1-md2prompt.html')\"",
     "test": "bun test",
+    "test:e2e": "node e2e/run.mjs",
     "check": "tsc --noEmit"
   },
   "dependencies": {

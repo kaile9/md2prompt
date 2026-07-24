@@ -57,9 +57,9 @@ report('3.4 前缀 D:/资料/ → 拼接正确', p3[0] === 'D:/资料/note.md', 
 // ---- 3.5 复制内容 ----
 await setPrefix('C:\\docs\\');
 await p.evaluate(() => { window.__copied = []; });
-// 点击文档路径的 ⧉ 复制钮
+// 点击文档路径的 ⧉ 复制钮（v2 交互：点路径文本=展开/收起，复制只走 ⧉ 钮，同 s3b 补测）
 const copyHtml = await p.evaluate(() => document.querySelector('.path-slot')?.outerHTML?.slice(0, 300));
-await p.click('.path-slot');
+await p.click('.path-slot [data-act="pcopy"]');
 await p.waitForTimeout(400);
 let copied = await p.evaluate(() => window.__copied.slice());
 let clip = null;
