@@ -23,7 +23,7 @@ MD2Prompt's answer: **the protocol matters more than the editor.** The editor is
 ## 30-second quickstart
 
 1. Grab `2youg1-md2prompt.html` from [Releases](../../releases) (one 6 MB file with all dependencies inlined; no backend, API, or telemetry; local-file editing works offline, while remote images and external links still use the network under normal browser rules);
-2. Double-click (Chrome/Edge recommended), click 「打开」 and pick your `.md` / `.jsonl` / `.xml`;
+2. Double-click (Chrome/Edge recommended), click 「打开」 and pick your `.md` / `.jsonl` / `.xml` — or just drag the file into the window (v2.0.2; the directory grant is remembered, asked once);
 3. Just edit. Cards appear instantly in the right 「修订」 panel;
 4. Click 「复制 Prompt」 and paste to your AI. It receives: file name, BLAKE3 hash, every edit (original + alter + line), every note (request / suggest / discuss);
 5. When the AI returns a new version, save it and 「打开」 again — if the hash pairs, **all your previous tracked changes restore automatically**. Keep iterating.
@@ -33,8 +33,10 @@ MD2Prompt's answer: **the protocol matters more than the editor.** The editor is
 ## Feature tour
 
 - **Edit-and-track**: replace / insert / delete / swap / annotate — recorded at sentence granularity (old struck through, new highlighted), like Word track-changes without an "accept" step.
-- **Three kinds of notes**: select text → floating ✎ card (or `Alt+M`) — **request** (do exactly this) / **suggest** (AI decides) / **discuss** (talk only, no edits), switchable in the floater; dashed underline + pin; sidebar card shows the quote, editable, withdrawable.
-- **Block swap**: `Alt+↑/↓` swaps with the neighbor (auto-recorded); the ⇄ rail button swaps with any line's block — swap is self-inverse, so withdraw/restore is just swapping again.
+- **Drop to open (v2.0.2)**: drag a file anywhere into the window; the directory grant is remembered after the first allow — no more pickers, one-click restore across restarts (keyboard included).
+- **Three kinds of notes**: select text → floating ✎ card (or `Alt+M`) — **request** (do exactly this) / **suggest** (AI decides) / **discuss** (talk only, no edits), solid white-on-color buttons (v2.0.2; JSONL record notes can pick a kind too); dashed underline + pin; sidebar card shows the quote, editable, withdrawable.
+- **Cards expand on hover (v2.0.2)**: revision cards stay collapsed until hovered, then show the full before/after (struck-through old, highlighted new); the revision panel auto-collapses to a slim rail (with a pending-count badge) on narrow windows.
+- **Block swap**: `Alt+↑/↓` swaps with the neighbor (auto-recorded; v2.0.2 reliably records multi-paragraph and container blocks); the ⇄ rail button swaps with any line's block — swap is self-inverse, so withdraw/restore is just swapping again.
 - **Hide / Withdraw (two-stage)**: "Hide" collapses confirmed edits; "Withdraw" previews strikethrough first (cancellable), confirm to actually revert; withdrawn edits become tombstones (capped at 50), revivable anytime.
 - **Render / Source / Split modes**: WYSIWYG; a CodeMirror source editor (syntax highlighting, line numbers, find & replace); or split view with **block-anchored row alignment** (matching block tops, not crude ratio sync). Notes and inline formatting (B/I/S/code/link) work in **all three modes**.
 - **Edit XML cards in place**: prompt-style tag blocks render as cards whose source you edit directly — tracked per keystroke, no modal whole-block replacement.
@@ -53,8 +55,8 @@ MD2Prompt's answer: **the protocol matters more than the editor.** The editor is
 
 ### Opening & saving
 
-- 「打开」 uses the browser's File System Access API (Chrome/Edge); Firefox falls back to upload/download. File handles live in your own IndexedDB — click anywhere after a restart to resume the last document.
-- On open you'll be asked for **parent-directory permission**: it resolves relative image paths and writes the `name.prompt.md` diary next to your document. Declining is fine — images show placeholders and the diary stops auto-saving (「下载 Prompt.md」 still works manually).
+- 「打开」 uses the browser's File System Access API (Chrome/Edge), or just drop a file into the window (v2.0.2); Firefox falls back to upload/download. File handles live in your own IndexedDB — click anywhere after a restart (mouse or keyboard, v2.0.2) to resume the last document.
+- **Parent-directory permission is remembered after one grant** (v2.0.2): it resolves relative image paths and writes the `name.prompt.md` diary next to your document — opening files afterwards never asks again; the picker only appears if you've never granted. Declining is fine — images show placeholders and the diary stops auto-saving (「下载 Prompt.md」 still works manually).
 - Every action is auto-saved inside an 800 ms debounce (top bar: 已存/写入中/失败）. Diary-write failures are reported on a separate channel from document-save failures.
 
 ### Editing & tracking
@@ -113,6 +115,15 @@ Full protocol in [SPEC.md](SPEC.md) §3 (Chinese; the single source of truth, wi
 
 ## Changelog
 
+### 2.0.2
+
+- **Drop to open**: drag a file into the window (FS handle first, graceful fallback); **parent-directory grant remembered** (zero pickers after the first allow — it used to ask on every open); restart restore now also works from the keyboard.
+- **Revision panel**: breathing room beside the text column, tool rail never overlaps text; auto-collapses to a slim rail below 1180 px (with a pending-count badge), expands back on wide windows; **cards expand on hover** with the full before/after (pure-CSS state, survives re-renders).
+- **Brightness/contrast root fix**: they used to dim only the glyphs, not the paper (page background sat outside the filter) — now the reading surface responds as a whole.
+- **Reliable swap**: multi-paragraph and container blocks no longer vanish silently on `Alt+↑/↓` (recording now resolves by post-move block index).
+- **Solid white-on-color note-kind buttons**; JSONL record notes can pick a kind too; shortcut conflicts are rejected with an inline "taken by ×" hint; the selection card no longer lingers forever (`#sel-card[hidden]`).
+- **Engineering**: `node e2e/run.mjs` is the single source of the 22-suite regression set (CI calls it too); one-off probes archived under `e2e/probes/`; new real-browser simulation gate (`full-sim.mjs`, 53 action-level assertions + screenshots); new `AGENTS.md` (a ≤20-line working contract); unit tests 211 → 216.
+
 ### 2.0.1
 
 - **Phantom first-edit revisions fixed**: Milkdown serializer dialect (`---`→`***`, table column padding, `-`→`*` + loose lists, `math_block`→`math\_block` escapes) was booked as a dozen phantom ops on the first flush (random lines affected, Ctrl+Z helpless). New normalization-equivalence check (canonText): blocks differing only in serializer quirks inherit the id and keep the original text — phantoms never enter the ledger (e2e/faithful.mjs gate + unit tests).
@@ -153,10 +164,11 @@ bun install
 bun run dev      # dev server
 bun run build    # produces a single dist/2youg1-md2prompt.html
 bun run check    # tsc --noEmit
-bun test         # 211 unit tests across 13 files
+bun test         # 216 unit tests across 13 files
+bun run test:e2e # = node e2e/run.mjs, 22 regression suites (Playwright needs Node)
 ```
 
-E2E (Playwright, requires Node): `life.mjs`, `v13.mjs`, `note.mjs`, `srcmode.mjs`, `export.mjs`, `look.mjs`, `measure.mjs`, `splitalign.mjs`, `sourceanno.mjs`, and `xmlmode.mjs` report failures with a non-zero exit code. The `qa15-*`, `perf*`, and screenshot scripts are manual probes, not automated gates.
+E2E gates, three of them: `bun test` for units; `node e2e/run.mjs` for the 22-suite regression set (same entry as CI); `node e2e/probes/full-sim.mjs` for real-browser simulation (action-level assertions + screenshots, mandatory after UI/interaction changes). One-off QA probes are archived under `e2e/probes/` (not regression — see `e2e/README.md`).
 
 ## FAQ
 

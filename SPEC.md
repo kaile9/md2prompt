@@ -296,6 +296,8 @@ E2E 门禁（Playwright，非零退出报失败）：`life.mjs` `v13.mjs` `note.
 
 卡片内富文本就地编辑；拖拽移动块；超大 md 的编辑器内虚拟滚动；多文档标签页（及由此引申的 A/B/C 版本对比，用户批注记录）；恢复路径的 gap 保真（恢复只承诺文本相等，非标准空行/行尾以当前文档风格归一）；AI 回改反向 diff **已否决**（用户裁决，见「不做」）；微排版/OpenType 设置组（hanging-punctuation、text-autospace、text-spacing-trim、text-wrap、tnum/onum——浏览器可达子集，@supports 门控；浏览器内 LaTeX 编译不做，形态不允许）。
 
+路线图（用户裁决，v2.0.2 记）：**全部 JavaScript 以最新 TypeScript 重写**——e2e/*.mjs 与 run.mjs 是仅剩的 JS（src/ 已全 TS）；重写时保持 runner 套件清单单源与探针归档结构，CI 同步切换（bun 跑 TS 直译，node 兜底 CDP 限制不变）。
+
 ## 9. 已知限制（终验确认，接受并备案）
 
 1. **跨节引用**：定义在末节、引用在前节的大文档，编辑前节时引用行可能被序列化转义（`[a][x]`→`\[a]\[x]`），幻影 replace 可在面板隐藏/撤回；同节引用逐字保真（终验 15/15）。
