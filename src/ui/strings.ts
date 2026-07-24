@@ -54,6 +54,9 @@ export const S = {
     suggest: '修改建议：由 Agent 定夺是否采纳',
     discuss: '希望与 Agent 讨论此处问题（勿改文本）',
   } as Record<string, string>,
+  dropHint: '松开以打开文档',
+  dropBadType: '只支持 .md / .markdown / .jsonl / .ndjson / .xml',
+  scConflict: (label: string): string => `已被「${label}」占用`,
 
   // 导出
   copyPrompt: '复制 Prompt',

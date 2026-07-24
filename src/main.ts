@@ -69,7 +69,7 @@ let sections: Section[] = [];
 let activeIdx = -1;
 let editingFile: DocState['file'] | null = null; // 编辑器当前承载的文档身份（flush 门禁）
 let unmountVirtual: (() => void) | null = null;
-let pendingSwaps: { first: string; otherFirst: string }[] = []; // Alt+↑/↓ 调换队列（PM 现场首行纯文本对），flush 时逐步模拟入账为 swap
+let pendingSwaps: { afterIdx: number; dir: 1 | -1 }[] = []; // Alt+↑/↓ 调换队列（移动后 PM 顶层块序号；commit 点解析）
 let editorChangesPaused = false; // 文件/目录选择期间屏蔽旧编辑器的 200ms 尾回调
 let editorPauseGeneration = 0; // 重叠 open 只允许最后一次流程解除门禁
 let srcCursor = { line: 1, col: 1 }; // 源码/分屏的 CM 光标（行列显示与调换锚点共用）
@@ -88,56 +88,34 @@ const docEl = (): HTMLElement => {
   return el;
 };
 
-/** PM 现场首行纯文本 → 匹配块：块首行（代码块跳过围栏行）经 project 投影后比对。 */
-const plainFirstOf = (b: Block): string => {
-  const lines = b.text.split('\n');
-  const fl = lines[0] ?? '';
-  const src = /^(`{3,}|~{3,})/.test(fl) ? (lines[1] ?? fl) : fl;
-  return project(src).plain;
-};
-
-/** Alt+↑/↓ 队列 → swap 对：在 flush 前旧序上逐步模拟（连发移动每步邻居不同，合并会记错账）。
- *  消歧靠相邻约束：被移块与对调块在模拟序中必须相邻；对不上宁可不记（幻影 swap 会毁恢复账）。
- *  已知边界：XML 卡（多块并一节点的区域）被 Alt 移动时只记到区域首块，恢复近似（SPEC §9 备案）。 */
-function resolvePendingSwaps(preCur: Block[]): { uid: string; lid: string }[] {
-  const sim = [...preCur];
-  const pairs: { uid: string; lid: string }[] = [];
-  for (const { first, otherFirst } of pendingSwaps) {
-    let found: { i: number; j: number } | undefined;
-    for (let i = 0; i < sim.length && !found; i++) {
-      if (plainFirstOf(sim[i]) !== first) continue;
-      for (const j of [i - 1, i + 1])
-        if (j >= 0 && j < sim.length && plainFirstOf(sim[j]) === otherFirst) {
-          found = { i, j };
-          break;
-        }
-    }
-    if (!found) continue;
-    const { i, j } = found;
-    [sim[i], sim[j]] = [sim[j], sim[i]];
-    pairs.push({ uid: sim[Math.min(i, j)].id, lid: sim[Math.max(i, j)].id }); // 记录时居 a 侧者在前
-  }
-  pendingSwaps = [];
-  return pairs;
-}
-
 /** flush 文本入账：以「捕获时的旧边界」切换（编辑期内块数可变，边界以 PM 现场为准）。 */
 function applySectionText(idx: number, text: string): void {
   const st = store.state;
   const prev = sections[idx];
   if (!st || !prev) return;
-  const preCur = st.cur; // flush 前旧序（swap 模拟起点）
+  const preCur = st.cur; // flush 前旧序（swap 对账数据源；dispatch 后即被换掉）
   const old = st.cur.slice(prev.start, prev.end);
   const next = reparseSection(text, old);
   if (next.length && old.length) next[0] = { ...next[0], gap: old[0].gap }; // 首块 gap 归还原位
   store.dispatch({ type: 'patchCur', cur: [...st.cur.slice(0, prev.start), ...next, ...st.cur.slice(prev.end)] });
   if (pendingSwaps.length) {
-    const pairs = resolvePendingSwaps(preCur);
+    // swap 入账（v2.0.2 序号方案，文本匹配退役）：钩子时按「移动后 PM 顶层块序号」追踪块身份
+    // （交换随动、同块连移并账），此处在新节内解析——PM 文档序 == 序列化文本序 == 重解析块序
+    // （delete 墓碑是 decoration 不占节点），next[afterIdx] 即被移块、next[afterIdx-dir] 即对调块。
+    // 多段落块/容器块首行文本不可分导致的静默丢账由此根治。
+    const swaps = pendingSwaps;
+    pendingSwaps = [];
     const st2 = store.state;
-    for (const { uid, lid } of pairs) {
-      const U = st2?.cur.find((b) => b.id === uid);
-      const L = st2?.cur.find((b) => b.id === lid);
-      if (!U || !L) continue;
+    const done = new Set<string>(); // 同块连移只入一笔（a/b 恒取 flush 后现行位置）
+    for (const { afterIdx, dir } of swaps) {
+      const b = next[afterIdx];
+      const other = next[afterIdx - dir];
+      if (!st2 || !b || !other || done.has(b.id)) continue;
+      done.add(b.id);
+      // 调换不增删块：两块都在旧序才可对账（防幻影 swap 毁恢复账）
+      if (!preCur.some((x) => x.id === b.id) || !preCur.some((x) => x.id === other.id)) continue;
+      const U = b.lineStart <= other.lineStart ? b : other;
+      const L = U === b ? other : b;
       store.dispatch({
         type: 'recordSwap',
         blockId: U.id,
@@ -321,9 +299,18 @@ const editorHooks: EditorHooks = {
   onChange: (text) => {
     if (!editorChangesPaused) applyEditedText(activeIdx, text);
   },
-  onMoveBlock: (_dir, _idx, first, otherFirst) => {
-    if (!first || !otherFirst) return; // 首行缺失（atom 等）：宁可不记（幻影 swap 毁恢复账）
-    pendingSwaps.push({ first, otherFirst });
+  onMoveBlock: (dir, idx) => {
+    if (idx === undefined) return;
+    // 序号追踪块身份：交换使 src↔idx 两块换位——既有记录指向被移块则随动（同块连移并账），指向被换旁块同样随动
+    const src = idx - dir;
+    let tracked = false;
+    for (const mv of pendingSwaps) {
+      if (mv.afterIdx === src) {
+        mv.afterIdx = idx;
+        tracked = true; // 本笔移动的就是该记录追踪的块
+      } else if (mv.afterIdx === idx) mv.afterIdx = src;
+    }
+    if (!tracked) pendingSwaps.push({ afterIdx: idx, dir });
   },
   onAnnotate: (blockIndex, quote) => annotateFlow(blockIndex, quote),
   onSelectText: (text, at) => {
@@ -535,7 +522,7 @@ function openRecord(b: Block): void {
       const meta = parseDoc(next, 'jsonl')[0]?.meta;
       store.dispatch({ type: 'patchCur', cur: st.cur.map((x) => (x.id === b.id ? { ...x, text: next, meta } : x)) });
     },
-    (note) => store.dispatch({ type: 'addNote', blockId: b.id, note }),
+    (note, kind) => store.dispatch({ type: 'addNote', blockId: b.id, note, kind }),
   );
 }
 
@@ -563,6 +550,7 @@ function onState(): void {
   if (!st || a === 'load' || a === 'new') cursorEl.textContent = ''; // 换文档即清旧行列（v1.5.1）
   refreshProgress(st);
   syncRail(st);
+  syncRailBadge(); // v2.0.2：细轨待决徽标随账目刷新
   if (!st) return;
   if (st.file.kind === 'jsonl') {
     if (a !== 'setSaveState') renderDoc(); // 记录编辑是离散动作，重建虚拟列表
@@ -818,13 +806,15 @@ function newFlow(): void {
   void fs.saveDocAs(''); // 首次保存即定位（§6 新建走 save-as）
 }
 
-/** 轻提示：复用 #save-state 短暂显示。 */
+/** 轻提示：复用 #save-state 短暂显示；代际 token 防过期回写盖掉新保存状态（v2.0.2）。 */
 let toastTimer = 0;
+let toastGen = 0;
 function toast(msg: string): void {
   saveEl.textContent = msg;
+  const gen = ++toastGen;
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => {
-    saveEl.textContent = SAVE_TEXT[getSaveState()];
+    if (gen === toastGen) saveEl.textContent = SAVE_TEXT[getSaveState()];
   }, 2400);
 }
 
@@ -832,6 +822,7 @@ function choice(message: string, options: string[]): Promise<number> {
   return new Promise((resolve) => {
     const root = floatRoot('floater');
     root.textContent = '';
+    const prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const backdrop = document.createElement('div');
     backdrop.className = 'floater-backdrop';
     const modal = document.createElement('div');
@@ -844,19 +835,30 @@ function choice(message: string, options: string[]): Promise<number> {
       releaseCloser(closer);
       root.textContent = '';
       document.removeEventListener('keydown', onKey, true);
+      prevFocus?.focus(); // 焦点还原（v2.0.2）
       resolve(i);
     };
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.stopPropagation();
         done(options.length - 1); // Esc = 末项（忽略）
+        return;
+      }
+      if (e.key === 'Tab') { // 轻量 focus trap：Tab 在按钮组内循环（v2.0.2）
+        const btns = [...bar.querySelectorAll<HTMLButtonElement>('button')];
+        if (!btns.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const i = btns.indexOf(document.activeElement as HTMLButtonElement);
+        const next = e.shiftKey ? (i <= 0 ? btns.length - 1 : i - 1) : (i + 1) % btns.length;
+        btns[next]?.focus();
       }
     };
     const closer = (): void => done(options.length - 1);
     registerCloser(closer);
     options.forEach((label, i) => {
       const b = document.createElement('button');
-      b.className = 'btn';
+      b.className = i === 0 ? 'btn btn-primary' : 'btn'; // 默认项实心主按钮（v2.0.2）
       b.type = 'button';
       b.textContent = label;
       b.addEventListener('click', () => done(i));
@@ -869,6 +871,7 @@ function choice(message: string, options: string[]): Promise<number> {
     });
     root.appendChild(backdrop);
     document.addEventListener('keydown', onKey, true);
+    bar.querySelector('button')?.focus();
   });
 }
 
@@ -896,10 +899,14 @@ onPrefsChange((p) => {
   setProgressMode(p.progress);
 });
 
-/** 侧栏拖拽调宽（持久化 localStorage；双击折叠由面板既有按钮承担）。 */
-function resizable(id: string, key: string, min: number, max: number, leftEdge: boolean): void {
+/** 侧栏拖拽调宽（持久化 localStorage；双击折叠由面板既有按钮承担）。
+ *  宽度单源在 CSS（--rail-min/--rail-max，v2.0.2）：边界经 getComputedStyle 读，不再有第二份数字。 */
+function resizable(id: string, key: string, leftEdge: boolean): void {
   const el = document.getElementById(id);
   if (!el) return;
+  const cs = getComputedStyle(el);
+  const min = parseInt(cs.getPropertyValue('--rail-min'), 10) || 0;
+  const max = parseInt(cs.getPropertyValue('--rail-max'), 10) || 1000;
   const saved = Number(localStorage.getItem(key));
   if (saved >= min && saved <= max) el.style.width = `${saved}px`;
   const grip = document.createElement('div');
@@ -927,8 +934,52 @@ function resizable(id: string, key: string, min: number, max: number, leftEdge: 
     document.addEventListener('mouseup', up);
   });
 }
-resizable('changes', 'md2prompt.w.changes', 280, 560, true);
-resizable('outline', 'md2prompt.w.outline', 160, 360, false);
+resizable('changes', 'md2prompt.w.changes', true);
+resizable('outline', 'md2prompt.w.outline', false);
+
+/* ---------- 修订栏智能折叠 + 待决徽标 + 工具轨 fixed 定位（v2.0.2） ---------- */
+
+const changesEl = document.getElementById('changes') as HTMLElement;
+let changesManual = false; // 用户手动折叠/展开在本次阈值穿越前优先（会话内记忆，不落 localStorage）
+const changesMq = window.matchMedia('(max-width: 1180px)');
+function syncChangesRail(): void {
+  if (!changesManual) changesEl.classList.toggle('collapsed', changesMq.matches);
+  syncRailBadge(); // 折叠态变化即刷新徽标（视口变化不产生 dispatch，panels 重绘会抹掉徽标元素）
+}
+changesMq.addEventListener('change', () => {
+  changesManual = false; // 阈值穿越即失效，重新听凭自动
+  syncChangesRail();
+});
+changesEl.addEventListener('click', (ev) => {
+  if ((ev.target as HTMLElement).closest('[data-act="collapse"],[data-act="expand"]')) changesManual = true;
+});
+
+const railBadge = document.createElement('span'); // 折叠时细轨待决徽标（口径同节徽标：非 hidden 即待决）
+railBadge.className = 'rail-badge';
+railBadge.hidden = true;
+changesEl.appendChild(railBadge);
+function syncRailBadge(): void {
+  if (!railBadge.isConnected) changesEl.appendChild(railBadge); // panels innerHTML 重建会抹掉它，随账目刷新重贴
+  const n = (store.state?.ops ?? []).filter((o) => o.state !== 'hidden').length;
+  railBadge.hidden = !changesEl.classList.contains('collapsed') || n === 0;
+  railBadge.textContent = String(n);
+}
+syncChangesRail(); // railBadge 就绪后首刷（先于 syncRailLeft）
+
+// 工具轨改 fixed 贴正文列右缘（随亮度根修迁出 #page 滤镜域；空间不足夹到呼吸区、给 minimap 让位）
+function syncRailLeft(): void {
+  const rail = document.getElementById('tool-rail');
+  const page = document.getElementById('page');
+  const doc = document.getElementById('doc');
+  if (!rail || !page || !doc) return;
+  const dr = doc.getBoundingClientRect();
+  const pr = page.getBoundingClientRect();
+  rail.style.left = `${Math.max(pr.left + 8, Math.min(dr.right + 7, pr.right - 70))}px`;
+}
+new ResizeObserver(syncRailLeft).observe(document.getElementById('page')!);
+window.addEventListener('resize', syncRailLeft);
+onPrefsChange(syncRailLeft);
+syncRailLeft();
 
 /* ---------- 快捷键分发（document 捕获阶段先于 PM keymap；设置面板可覆盖组合） ---------- */
 
@@ -941,21 +992,25 @@ const scActions: Record<ScAction, () => void> = {
   moveDown: () => moveBlock(1),
   sourceToggle: () => document.getElementById('mode-btn')?.click(),
 };
+/** 组合 → 动作 Map：prefs 变更时重建一次（v2.0.2），击键路径不再每键 Object.keys 循环。 */
+let scMap = new Map<string, ScAction>();
+const rebuildScMap = (): void => {
+  const p = currentPrefs();
+  scMap = new Map((Object.keys(SC_DEFAULT) as ScAction[]).map((a) => [p.shortcuts[a] ?? SC_DEFAULT[a], a]));
+};
+rebuildScMap();
+onPrefsChange(rebuildScMap);
 document.addEventListener(
   'keydown',
   (ev) => {
     if (!(ev.target as HTMLElement | null)?.closest?.('#doc')) return;
-    const p = currentPrefs();
-    for (const a of Object.keys(SC_DEFAULT) as ScAction[]) {
-      // 源码/分屏：行内格式/批注/切模式可用（BUG 4）；块移动仅渲染模式（PM 命令）
-      if (viewMode !== 'render' && a !== 'sourceToggle' && a !== 'annotate' && a !== 'bold' && a !== 'italic' && a !== 'strike') continue;
-      if (comboOf(ev) === (p.shortcuts[a] ?? SC_DEFAULT[a])) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        scActions[a]();
-        return;
-      }
-    }
+    const a = scMap.get(comboOf(ev));
+    if (!a) return;
+    // 源码/分屏：行内格式/批注/切模式可用（BUG 4）；块移动仅渲染模式（PM 命令）
+    if (viewMode !== 'render' && a !== 'sourceToggle' && a !== 'annotate' && a !== 'bold' && a !== 'italic' && a !== 'strike') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    scActions[a]();
   },
   true,
 );
@@ -1038,20 +1093,62 @@ document.getElementById('new-btn')?.addEventListener('click', newFlow);
 store.subscribe(onState);
 // 日记构建/落盘失败可见化（A-3）：与文档保存状态分通道提示，下轮 commit 自动重试
 onPromptError(() => toast(S.promptFailed));
-// 重启恢复须用户手势（requestPermission 链）；已有文档时不覆盖用户意图
+// 重启恢复须用户手势（requestPermission 链；pointerdown/keydown 双通道，v2.0.2 起含键盘）；已有文档时不覆盖用户意图
+const restoreOnce = (): void =>
+  void (async () => {
+    if (store.state) return;
+    const generation = ++loadGeneration;
+    const f = await fs.restoreDoc();
+    if (f && generation === loadGeneration) await loadDocFile(f, false, generation);
+  })();
 window.addEventListener(
   'pointerdown',
-  (event) =>
-    void (async () => {
-      const target = event.target;
-      if (target instanceof Element && target.closest('#open-btn, #new-btn')) return;
-      if (store.state) return;
-      const generation = ++loadGeneration;
-      const f = await fs.restoreDoc();
-      if (f && generation === loadGeneration) await loadDocFile(f, false, generation);
-    })(),
+  (event) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest('#open-btn, #new-btn')) return;
+    restoreOnce();
+  },
   { once: true },
 );
+window.addEventListener('keydown', restoreOnce, { once: true });
+
+/* ---------- 拖放打开（v2.0.2）：拖文件进窗口即编辑；FS 句柄优先、files 降级、白名单拒绝 ---------- */
+
+const dropVeil = document.createElement('div');
+dropVeil.id = 'drop-veil';
+dropVeil.textContent = S.dropHint;
+let dragDepth = 0; // dragenter/dragleave 成对计数，防子元素穿越闪烁
+const appEl = document.getElementById('app');
+appEl?.addEventListener('dragenter', (e) => {
+  if (!e.dataTransfer?.types.includes('Files')) return;
+  e.preventDefault();
+  if (dragDepth++ === 0) appEl.appendChild(dropVeil);
+});
+appEl?.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+});
+appEl?.addEventListener('dragleave', () => {
+  if (dragDepth > 0 && --dragDepth === 0) dropVeil.remove();
+});
+appEl?.addEventListener('drop', (e) => {
+  if (!e.dataTransfer?.types.includes('Files')) return;
+  e.preventDefault();
+  dragDepth = 0;
+  dropVeil.remove();
+  void (async () => {
+    flushEditor(false); // 同 openFlow：切换 fsio 目标前先提交当前编辑器
+    const generation = ++loadGeneration;
+    const pauseGeneration = ++editorPauseGeneration;
+    editorChangesPaused = true;
+    try {
+      const f = await fs.openDropped(e.dataTransfer);
+      if (f && generation === loadGeneration) await loadDocFile(f, true, generation);
+      else if (!f) toast(S.dropBadType);
+    } finally {
+      if (pauseGeneration === editorPauseGeneration) editorChangesPaused = false;
+    }
+  })();
+});
 
 const empty = document.createElement('p');
 empty.className = 'placeholder';

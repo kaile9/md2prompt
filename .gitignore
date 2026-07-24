@@ -2,5 +2,6 @@ node_modules/
 e2e/node_modules/
 dist/
 e2e-shots/
+e2e/probes/shots/
 *.log
 .DS_Store

@@ -75,6 +75,17 @@
 > 11. **v1.6 追加**（合并前增补）：GitHub Actions CI（check+e2e 每 push、v* tag 自动 Release）；微排版 + OpenType 设置组（标点悬挂/中西文间隙/标点压缩/优化折行/表格数字/旧式数字，@supports 门控，e2e/microtypo.mjs 门禁）；说明书中英双语（README.en 补 Manual 节）；Discussions 已开通（反馈入口）。
 > 12. **v2.0.1**：① 首笔编辑幻影修订根治——序列化器方言（hr 标记/表格对齐/列表子弹与松散/转义）在首次 flush 被整篇入账；`canonText` 归一化等价判定：仅怪癖不同的块继承 id 并保留原文（e2e/faithful.mjs 门禁）。被真实编辑的块仍按序列化器规范形入账（同表格归一化旧例，一条 replace）。② 批注三型着色（浮层/批注钉/徽标，令/议/论）。③ look.mjs 选段步骤字体度量无关化（CI 环境回归）。
 
+> **v2.0.2 记录**（并行线择优合并 + 用户十一条反馈，全部落地；tsc + 216 例单测 + e2e 23 套回归 + 浏览器仿真 53 断言全绿）：
+> 1. **拖放打开**：拖文件进窗口即编辑（`getAsFileSystemHandle` 优先走 FS 全链路，无句柄落 files 降级；扩展名白名单外 toast 拒绝）。
+> 2. **目录记忆（ensureDir）**：IndexedDB 句柄 granted 零弹窗、prompt 态借打开手势 requestPermission 一次、都没有才弹选择器——授权一次之后打开任何文档不再询问；重启恢复手势 pointerdown + keydown 双通道（纯键盘用户此前永不触发）。
+> 3. **修订栏**：正文列右侧呼吸区（4.5rem，文本页宽不变）；工具轨改 fixed 贴正文列右缘、任何窗口宽度不压字；≤1180px 自动折叠细轨、穿回自动展开（手动优先、阈值穿越失效）+ 细轨待决数徽标；修订卡 hover 展开全内容对比（before 删除线/after 高亮整块陈列，纯 CSS 态，innerHTML 重建不丢；触屏点元信息行切换）。
+> 4. **亮度/对比度根修**：纸面底色原由 body 绘制、在滤镜域外（只有字变纸不变）——`#page` 自绘底色，纸+字整体响应；工具轨迁出滤镜域（反向滤镜因中间值裁切不可逆被否）。
+> 5. **swap 入账序号方案**：首行文本匹配退役（多段落块/容器块首行不可分导致静默丢账）——钩子时按「移动后 PM 顶层块序号」追踪块身份（交换随动、同块连移并账），commit 点在新节内解析（PM 文档序 == 序列化序 == 重解析块序，墓碑不占节点）。
+> 6. **批注三型实心白字按钮**（浮层选中态实心着色）；JSONL 记录附注补齐三型选择器（原全缺省 request）。
+> 7. **快捷键**：录入撞车即时提示「已被『×』占用」并不予保存；分发改 prefs 变更时建一次的 Map（原每击键 Object.keys 循环）。
+> 8. **小修一批**：choice() 默认项实心 + 焦点 trap + 焦点还原；`#sel-card[hidden]` 修复（display:flex 曾压过 hidden 永不消失）；`project` 按 CommonMark flanking 规则保留字面标记符（snake_case/未配对标记不再投影消失）；indent 伪围栏（前导空格 ≤3）；joinPath 混合分隔符跟随前缀首个分隔符；toast 代际 token 防过期回写；planPatch 表外重算消除。
+> 9. **工程**：`e2e/run.mjs` 为套件单源（23 套回归，CI 改调它）；一次性探针归 `e2e/probes/`；`full-sim.mjs` 浏览器仿真（真实 Chromium 按用户路径操作 + 逐屏截图）与单测同级硬门槛；新建 `AGENTS.md`（≤20 行工作契约）；CSS 主题 token 硬编码 fallback 删 193 处、z-index 归并命名常量、侧栏宽度 CSS 单源（JS 经 getComputedStyle 读边界）。
+
 ## 0. 产品一句话
 
 本地、单文件 HTML、免安装、秒开的 Markdown/JSONL 修改器：所见即所得编辑即留痕（Word 修订心智），把人的修改与批注实时落盘为一份**协议精确的 Prompt.md**，复制即可回传任何 Agent，无需重传原文、无需 Agent 调工具。

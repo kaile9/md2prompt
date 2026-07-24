@@ -50,11 +50,11 @@ const metrics = () =>
 await p.click('#settings-btn');
 await p.waitForTimeout(250);
 
-// 42rem：max-width 768px，应精确达到并居中（修复前 shrink-wrap 546px）
+// 42rem：max-width 808px（v2.0.2 起 cap = measure + 8.5rem：左 4rem 行号 + 右 4.5rem 呼吸区），应精确达到并居中（修复前 shrink-wrap 546px）
 await setMeasure(42);
 await p.waitForTimeout(250);
 let m = await metrics();
-ok('1. measure=42 时 #doc = 48rem(768px) 而非内容塌缩', Math.abs(m.w - 768) < 2, `w=${m.w}`);
+ok('1. measure=42 时 #doc = 50.5rem(808px) 而非内容塌缩', Math.abs(m.w - 808) < 2, `w=${m.w}`);
 
 // 61rem（>60）：cap 1076px > 列宽 864 → 满列不溢出
 await setMeasure(61);
@@ -68,19 +68,19 @@ await p.waitForTimeout(250);
 m = await metrics();
 ok('3. measure=200 时 #doc 满列且不横向溢出', Math.abs(m.w - m.colW) < 2 && !m.hScroll, `w=${m.w} col=${m.colW}`);
 
-// 宽视口（2200px）下 measure=80：cap 1376px，应精确达到
+// 宽视口（2200px）下 measure=80：cap 1416px，应精确达到
 await p.setViewportSize({ width: 2200, height: 900 });
 await p.waitForTimeout(300);
 await setMeasure(80);
 await p.waitForTimeout(250);
 m = await metrics();
-ok('4. 宽视口 measure=80 时 #doc = 86rem(1376px)', Math.abs(m.w - 1376) < 2, `w=${m.w}`);
+ok('4. 宽视口 measure=80 时 #doc = 88.5rem(1416px)', Math.abs(m.w - 1416) < 2, `w=${m.w}`);
 
 // 缩回 30rem：小页宽同样精确
 await setMeasure(30);
 await p.waitForTimeout(250);
 m = await metrics();
-ok('5. measure=30 时 #doc = 36rem(576px)', Math.abs(m.w - 576) < 2, `w=${m.w}`);
+ok('5. measure=30 时 #doc = 38.5rem(616px)', Math.abs(m.w - 616) < 2, `w=${m.w}`);
 
 await b.close();
 if (fails.length) {

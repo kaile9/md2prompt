@@ -121,11 +121,24 @@ function revRowHtml(state: DocState, op: Op): string {
     op.type === 'note' && !op.state
       ? `<button class="mini-btn" data-act="edit-note" data-id="${esc(op.id)}">${S.editNote}</button>`
       : '';
+  // v2.0.2：全内容对比详情——hover（纯 CSS 态，innerHTML 重建不丢）/ 触屏点 .rev-meta 切 .open；
+  // 整块陈列不重算句级差异（before 删除线、after 高亮）
+  const detail =
+    op.type === 'replace'
+      ? `<div class="rev-detail"><div class="rd-before">${esc(op.before)}</div><div class="rd-after">${esc(op.after)}</div></div>`
+      : op.type === 'insert'
+        ? `<div class="rev-detail"><div class="rd-after">${esc(op.after)}</div></div>`
+        : op.type === 'delete'
+          ? `<div class="rev-detail"><div class="rd-before">${esc(op.before)}</div></div>`
+          : op.type === 'swap'
+            ? `<div class="rev-detail"><div class="rd-meta">${S.lineLabel(op.a)} ⇄ ${S.lineLabel(op.b)}</div></div>`
+            : `<div class="rev-detail">${op.quote ? `<div class="rd-quote">${esc(op.quote)}</div>` : ''}<div class="rd-note">${esc(op.note)}</div></div>`;
   return `<div class="rev-row${armed}" data-id="${esc(op.id)}">
     <div class="rev-top"><span class="rev-badge rb-${op.type}${op.type === 'note' ? ` rb-kind-${op.kind ?? 'request'}` : ''}">${op.type === 'note' ? NOTE_ICON[op.kind ?? 'request'] : OP_ICON[op.type]}</span><span class="rev-anchor" data-bid="${esc(op.blockId)}"${line != null ? ` data-line="${line}"` : ''}>${esc(cut(opAnchor(op), 30))}</span></div>
     ${quoteLine}
     ${noteLine}
-    <div class="rev-bottom"><span class="rev-meta">${esc(meta)}</span><span class="rev-actions">${cardActs(op)}${editBtn}<button class="mini-btn" data-act="jump" data-id="${esc(op.id)}">${S.jump}</button></span></div>
+    ${detail}
+    <div class="rev-bottom"><span class="rev-meta" data-act="rdtoggle">${esc(meta)}</span><span class="rev-actions">${cardActs(op)}${editBtn}<button class="mini-btn" data-act="jump" data-id="${esc(op.id)}">${S.jump}</button></span></div>
   </div>`;
 }
 
@@ -301,6 +314,9 @@ export function mountPanels(store: Store): void {
         break;
       case 'qexpand':
         el.classList.toggle('expanded');
+        break;
+      case 'rdtoggle': // v2.0.2：触屏兜底——点元信息行切换详情展开（桌面走 :hover 纯 CSS 态）
+        el.closest('.rev-row')?.classList.toggle('open');
         break;
       case 'pcopy': {
         const st = store.state;
